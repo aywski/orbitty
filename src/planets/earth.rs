@@ -93,41 +93,28 @@ impl Planet for Earth {
 }
 
 fn land_color(lat: f64, lon: f64) -> Rgb {
-    let abs_lat = lat.abs();
-    let n = noise2(lon * 3.0, lat * 3.0) * 0.5
-          + noise2(lon * 9.0, lat * 9.0) * 0.35
-          + noise2(lon * 22.0, lat * 22.0) * 0.15;
+    let abs_lat_d = lat.abs().to_degrees();
+    let n = noise2(lon * 3.0, lat * 3.0) * 0.7
+          + noise2(lon * 8.0, lat * 8.0) * 0.3;
 
-    let lat_d = lat.to_degrees();
-
-    // Desert belts ~15-33° latitude (Sahara, Arabia, Gobi, Australian outback).
-    if lat_d.abs() > 13.0 && lat_d.abs() < 34.0 {
-        let d = noise2(lon * 1.5, lat * 2.0);
-        if d > 0.35 {
-            let sand = Rgb(215, 185, 118);
-            let dune = Rgb(185, 150, 80);
-            let rock = Rgb(155, 120, 72);
-            return if n > 0.65 { sand.lerp(dune, (n - 0.65) / 0.35) }
-                   else { rock.lerp(sand, n / 0.65) };
-        }
-    }
-
-    if abs_lat < 0.22 {
-        // Deep tropics - rainforest
-        Rgb(22, 88, 28).lerp(Rgb(48, 115, 38), n)
-    } else if abs_lat < 0.52 {
-        // Subtropics/tropics
-        Rgb(55, 115, 42).lerp(Rgb(80, 140, 55), n)
-    } else if abs_lat < 0.90 {
-        // Temperate - grass, forest, farmland
-        let grass = Rgb(90, 130, 50);
-        let forest = Rgb(45, 90, 32);
-        let farm = Rgb(130, 130, 68);
-        if n > 0.65 { grass.lerp(farm, (n - 0.65) / 0.35) }
-        else { forest.lerp(grass, n / 0.65) }
+    if abs_lat_d < 12.0 {
+        // Equatorial rainforest
+        Rgb(18, 80, 24).lerp(Rgb(42, 108, 34), n)
+    } else if abs_lat_d < 25.0 {
+        // Tropical - mostly green with slight dry tinge near 25°
+        let t = (abs_lat_d - 12.0) / 13.0;
+        Rgb(48, 108, 36).lerp(Rgb(95, 118, 48), t * (0.3 + n * 0.4))
+    } else if abs_lat_d < 33.0 {
+        // Semi-arid / savanna - muted, not strongly yellow
+        let sand = Rgb(155, 138, 82);
+        let dry_green = Rgb(98, 118, 52);
+        dry_green.lerp(sand, n * 0.55)
+    } else if abs_lat_d < 52.0 {
+        // Temperate - green forest and grassland
+        Rgb(42, 88, 30).lerp(Rgb(82, 122, 44), n)
     } else {
-        // Boreal / taiga (extends to high latitudes since no ice caps)
-        Rgb(38, 72, 38).lerp(Rgb(60, 90, 48), n)
+        // Boreal / taiga
+        Rgb(35, 68, 35).lerp(Rgb(55, 85, 44), n)
     }
 }
 

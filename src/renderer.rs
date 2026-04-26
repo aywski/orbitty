@@ -129,7 +129,7 @@ pub fn render(scene: &Scene) -> Vec<Cell> {
     for py in 0..pixel_h {
         for px in 0..width {
             let dx = (px as f64 - cx + 0.5) / radius;
-            let dy = (py as f64 - cy + 0.5) / radius;
+            let dy = -(py as f64 - cy + 0.5) / radius;
             let r2 = dx * dx + dy * dy;
 
             let mut sphere_color: Option<Rgb> = None;
