@@ -1,0 +1,9 @@
+[package]
+name = "orbitty"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
+crossterm = "0.29.0"
