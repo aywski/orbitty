@@ -1,6 +1,6 @@
 # orbitty
 
-Terminal idle screensaver - slowly spinning planets with a real-time day/night terminator based on actual orbital mechanics.
+Terminal idle screensaver - slowly spinning planets on actual orbital mechanics.
 ![gif](demo.gif)
 
 ## Requirements
