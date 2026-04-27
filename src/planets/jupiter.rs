@@ -1,10 +1,20 @@
 use std::f64::consts::PI;
 use crate::palette::Rgb;
-use super::{Planet, noise2};
+use super::{Planet, Moon, noise2};
 
 pub struct Jupiter;
 
 impl Planet for Jupiter {
+    fn moons(&self) -> Vec<Moon> {
+        vec![
+            // Galilean moons, innermost to outermost
+            Moon { color: Rgb(215, 178, 52), radius: 0.055, orbital_radius: 2.0, inclination: 0.0, speed: 1.2, phase: 0.0 },
+            Moon { color: Rgb(208, 195, 170), radius: 0.048, orbital_radius: 2.8, inclination: 0.01, speed: 0.6, phase: 1.8 },
+            Moon { color: Rgb(138, 128, 113), radius: 0.062, orbital_radius: 3.9, inclination: 0.02, speed: 0.3, phase: 3.5 },
+            Moon { color: Rgb(88, 82, 73), radius: 0.058, orbital_radius: 5.3, inclination: 0.03, speed: 0.12, phase: 5.0 },
+        ]
+    }
+
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb {
         let bands = [
             (0.00, Rgb(205, 175, 125)),

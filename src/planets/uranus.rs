@@ -1,10 +1,20 @@
 use std::f64::consts::PI;
 use crate::palette::Rgb;
-use super::{Planet, noise2};
+use super::{Planet, Moon, noise2};
 
 pub struct Uranus;
 
 impl Planet for Uranus {
+    fn moons(&self) -> Vec<Moon> {
+        vec![
+            Moon { color: Rgb(150, 146, 141), radius: 0.040, orbital_radius: 2.20, inclination: 0.06, speed: 0.90, phase: 1.0 },
+            Moon { color: Rgb(186, 182, 176), radius: 0.045, orbital_radius: 2.80, inclination: 0.02, speed: 0.52, phase: 4.0 },
+            Moon { color: Rgb(80, 78, 74), radius: 0.044, orbital_radius: 3.45, inclination: 0.01, speed: 0.32, phase: 2.0 },
+            Moon { color: Rgb(170, 166, 160), radius: 0.050, orbital_radius: 4.35, inclination: 0.01, speed: 0.18, phase: 0.5 },
+            Moon { color: Rgb(115, 112, 108), radius: 0.050, orbital_radius: 5.25, inclination: 0.01, speed: 0.12, phase: 3.0 },
+        ]
+    }
+
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb {
         let t_pole = (lat / (PI / 2.0)).abs().clamp(0.0, 1.0);
 

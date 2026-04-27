@@ -1,6 +1,6 @@
 use std::f64::consts::PI;
 use crate::palette::Rgb;
-use super::{Planet, wrap_lon, noise2};
+use super::{Planet, Moon, wrap_lon, noise2};
 
 pub struct Earth;
 
@@ -80,6 +80,12 @@ fn is_land(lat: f64, lon: f64) -> bool {
 }
 
 impl Planet for Earth {
+    fn moons(&self) -> Vec<Moon> {
+        vec![
+            Moon { color: Rgb(188, 183, 170), radius: 0.08, orbital_radius: 2.8, inclination: 0.09, speed: 0.22, phase: 1.5 },
+        ]
+    }
+
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb {
         let base = if is_land(lat, lon) {
             land_color(lat, lon)

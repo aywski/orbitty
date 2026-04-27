@@ -82,7 +82,11 @@ fn star_brightness(i: usize) -> (u8, u8) {
     b
 }
 
-pub fn render(scene: &Scene) -> Vec<Cell> {
+// Persistent per-pixel trail buffer: (r, g, b) at full saturation + intensity in [0, 1].
+// Size must match width * pixel_h; resize (clearing) on dimension change is handled inside render().
+pub type TrailBuf = Vec<(Rgb, f32)>;
+
+pub fn render(scene: &Scene, trail: &mut TrailBuf) -> Vec<Cell> {
     let width = scene.width;
     let height = scene.height;
     let pixel_h = height * 2;
@@ -93,6 +97,18 @@ pub fn render(scene: &Scene) -> Vec<Cell> {
     let cy = pixel_h as f64 / 2.0;
 
     let mut pixels: Vec<Option<Rgb>> = vec![None; width * pixel_h];
+
+    // Resize trail if terminal dimensions changed (clears old data)
+    let trail_size = width * pixel_h;
+    if trail.len() != trail_size {
+        trail.clear();
+        trail.resize(trail_size, (Rgb(0, 0, 0), 0.0));
+    }
+    // Decay existing trail pixels 18% per frame; clear near-zero
+    for p in trail.iter_mut() {
+        p.1 *= 0.82;
+        if p.1 < 0.018 { p.1 = 0.0; }
+    }
 
     let (right, up, look) = view_basis(scene.orbit_angle, ORBIT_TILT);
 
@@ -193,6 +209,15 @@ pub fn render(scene: &Scene) -> Vec<Cell> {
         }
     }
 
+    render_moons(&mut pixels, trail, width, pixel_h, cx, cy, radius, scene, right, up, look);
+
+    // Composite decayed trail into empty pixel slots (planet/rings naturally overwrite)
+    for i in 0..pixels.len() {
+        if pixels[i].is_none() && trail[i].1 > 0.0 {
+            pixels[i] = Some(trail[i].0.scale(trail[i].1 as f64));
+        }
+    }
+
     let mut cells = pixels_to_cells(&pixels, width, pixel_h);
 
     for (idx, star) in star_layer.iter().enumerate() {
@@ -209,6 +234,91 @@ pub fn render(scene: &Scene) -> Vec<Cell> {
         draw_help(&mut cells, width, height);
     }
     cells
+}
+
+fn moon_world_pos(r: f64, theta: f64, inclination: f64) -> [f64; 3] {
+    [
+        r * theta.cos(),
+        r * theta.sin() * inclination.sin(),
+        r * theta.sin() * inclination.cos(),
+    ]
+}
+
+fn moon_occluded(pos: [f64; 3], right: [f64; 3], up: [f64; 3], look: [f64; 3]) -> bool {
+    let m_dx = dot3(pos, right);
+    let m_dy = dot3(pos, up);
+    m_dx * m_dx + m_dy * m_dy <= 1.0 && dot3(pos, look) > 0.0
+}
+
+// Lit sphere disc, used for the moon itself
+fn draw_disc_sphere(
+    pixels: &mut Vec<Option<Rgb>>,
+    width: usize, pixel_h: usize,
+    cx: f64, cy: f64, eff_r: f64, color: Rgb,
+    right: [f64; 3], up: [f64; 3], look: [f64; 3],
+) {
+    let x0 = (cx - eff_r - 1.0).floor() as i64;
+    let x1 = (cx + eff_r + 1.0).ceil() as i64;
+    let y0 = (cy - eff_r - 1.0).floor() as i64;
+    let y1 = (cy + eff_r + 1.0).ceil() as i64;
+    for py in y0..=y1 {
+        for px in x0..=x1 {
+            if px < 0 || px >= width as i64 || py < 0 || py >= pixel_h as i64 { continue; }
+            let ddx = (px as f64 + 0.5 - cx) / eff_r;
+            let ddy = -(py as f64 + 0.5 - cy) / eff_r;
+            let r2 = ddx * ddx + ddy * ddy;
+            if r2 > 1.0 { continue; }
+            let z_front = (1.0 - r2).sqrt();
+            let nx = ddx * right[0] + ddy * up[0] + z_front * (-look[0]);
+            let ny = ddx * right[1] + ddy * up[1] + z_front * (-look[1]);
+            let nz = ddx * right[2] + ddy * up[2] + z_front * (-look[2]);
+            let lit = lighting::compute(nx, ny, nz, SUN_DIR);
+            let limb = z_front.powf(0.3).max(0.18);
+            pixels[py as usize * width + px as usize] = Some(color.scale(lit * limb));
+        }
+    }
+}
+
+fn render_moons(
+    pixels: &mut Vec<Option<Rgb>>,
+    trail: &mut TrailBuf,
+    width: usize, pixel_h: usize,
+    cx: f64, cy: f64, radius: f64,
+    scene: &Scene,
+    right: [f64; 3], up: [f64; 3], look: [f64; 3],
+) {
+    for moon in scene.planet.moons() {
+        let theta = scene.spin * moon.speed + moon.phase;
+        let r = moon.orbital_radius;
+        let pos = moon_world_pos(r, theta, moon.inclination);
+        if moon_occluded(pos, right, up, look) { continue; }
+        let m_dx = dot3(pos, right);
+        let m_dy = dot3(pos, up);
+        let mx = cx + m_dx * radius;
+        let my = cy - m_dy * radius;
+        let eff_r = (moon.radius * radius).max(0.6);
+
+        // Write current position into trail buffer at full intensity
+        let trail_r = (eff_r * 0.55).max(0.5);
+        let tx0 = (mx - trail_r - 1.0).floor() as i64;
+        let tx1 = (mx + trail_r + 1.0).ceil() as i64;
+        let ty0 = (my - trail_r - 1.0).floor() as i64;
+        let ty1 = (my + trail_r + 1.0).ceil() as i64;
+        for py in ty0..=ty1 {
+            for px in tx0..=tx1 {
+                if px < 0 || px >= width as i64 || py < 0 || py >= pixel_h as i64 { continue; }
+                let dx = (px as f64 + 0.5 - mx) / trail_r;
+                let dy = (py as f64 + 0.5 - my) / trail_r;
+                if dx * dx + dy * dy <= 1.0 {
+                    let idx = py as usize * width + px as usize;
+                    trail[idx] = (moon.color, 1.0);
+                }
+            }
+        }
+
+        // Draw the moon with sphere shading into the pixel buffer
+        draw_disc_sphere(pixels, width, pixel_h, mx, my, eff_r, moon.color, right, up, look);
+    }
 }
 
 fn ring_shade(r: f64, inner: f64, outer: f64, phi: f64, spin: f64) -> Rgb {
@@ -346,6 +456,10 @@ fn cross3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
         a[2] * b[0] - a[0] * b[2],
         a[0] * b[1] - a[1] * b[0],
     ]
+}
+
+fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
 pub fn flush(

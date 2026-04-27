@@ -1,13 +1,22 @@
 mod earth;
-mod mars;
 mod jupiter;
-mod saturn;
-mod venus;
+mod mars;
 mod mercury;
-mod uranus;
 mod neptune;
+mod saturn;
+mod uranus;
+mod venus;
 
 use crate::palette::Rgb;
+
+pub struct Moon {
+    pub color: Rgb,
+    pub radius: f64,         // display radius in planet-radius units
+    pub orbital_radius: f64, // display orbit distance in planet-radius units
+    pub inclination: f64,    // orbital plane tilt in radians (0 = equatorial plane)
+    pub speed: f64,          // angular speed relative to spin_accum (negative = retrograde)
+    pub phase: f64,          // initial orbital phase in radians
+}
 
 pub trait Planet: Send + Sync {
     // Returns base surface color at (lat, lon) in radians.
@@ -15,7 +24,13 @@ pub trait Planet: Send + Sync {
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb;
 
     // Optional: render extra geometry (rings etc) around the sphere
-    fn has_rings(&self) -> bool { false }
+    fn has_rings(&self) -> bool {
+        false
+    }
+
+    fn moons(&self) -> Vec<Moon> {
+        vec![]
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -75,8 +90,12 @@ pub fn get(id: PlanetId) -> Box<dyn Planet> {
 pub fn wrap_lon(lon: f64) -> f64 {
     use std::f64::consts::PI;
     let mut l = lon % (2.0 * PI);
-    if l > PI { l -= 2.0 * PI; }
-    if l < -PI { l += 2.0 * PI; }
+    if l > PI {
+        l -= 2.0 * PI;
+    }
+    if l < -PI {
+        l += 2.0 * PI;
+    }
     l
 }
 
@@ -100,7 +119,9 @@ pub fn noise2(x: f64, y: f64) -> f64 {
 }
 
 fn hash2(x: i64, y: i64) -> f64 {
-    let mut h = x.wrapping_mul(374761393).wrapping_add(y.wrapping_mul(668265263));
+    let mut h = x
+        .wrapping_mul(374761393)
+        .wrapping_add(y.wrapping_mul(668265263));
     h = (h ^ (h >> 13)).wrapping_mul(1274126177);
     h = h ^ (h >> 16);
     (h as u64 as f64) / (u64::MAX as f64)

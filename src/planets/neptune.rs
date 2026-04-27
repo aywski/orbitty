@@ -1,6 +1,6 @@
 use std::f64::consts::PI;
 use crate::palette::Rgb;
-use super::{Planet, noise2};
+use super::{Planet, Moon, noise2};
 
 pub struct Neptune;
 
@@ -12,6 +12,13 @@ fn wdlon(lon: f64, target: f64) -> f64 {
 }
 
 impl Planet for Neptune {
+    fn moons(&self) -> Vec<Moon> {
+        vec![
+            // Triton: retrograde (speed < 0) and high inclination (~157 deg = 2.74 rad)
+            Moon { color: Rgb(195, 182, 172), radius: 0.062, orbital_radius: 3.10, inclination: 2.74, speed: -0.15, phase: 1.5 },
+        ]
+    }
+
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb {
         let t_pole = (lat / (PI / 2.0)).abs().clamp(0.0, 1.0);
 

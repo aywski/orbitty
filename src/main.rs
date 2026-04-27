@@ -78,6 +78,7 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
     let mut spin_accum: f64 = 0.0;
 
     let mut prev_frame: Vec<renderer::Cell> = Vec::new();
+    let mut trail: renderer::TrailBuf = Vec::new();
     let mut last_frame = Instant::now();
 
     loop {
@@ -112,10 +113,12 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
                 }
                 Event::Key(KeyEvent { code: KeyCode::Char('r' | 'к'), .. }) => {
                     spin_accum = 0.0;
+                    trail.clear();
                 }
                 Event::Key(KeyEvent { code: KeyCode::Char(c @ '1'..='8'), .. }) => {
                     current_planet = PlanetId::from_digit(c.to_digit(10).unwrap() as u8);
                     spin_accum = 0.0;
+                    trail.clear();
                 }
                 _ => {}
             }
@@ -150,7 +153,7 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
             planet_name: current_planet.name(),
             show_help,
         };
-        let frame = renderer::render(&scene);
+        let frame = renderer::render(&scene, &mut trail);
         renderer::flush(stdout, &frame, &prev_frame, width, height)?;
         prev_frame = frame;
     }
