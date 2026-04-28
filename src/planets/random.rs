@@ -100,31 +100,43 @@ pub fn make(seed: u64) -> RandomPlanet {
     let style = (rng(seed, 8) * 5.0) as u8;
 
     let hue = rng(seed, 1) * 360.0;
-    let sat = 0.30 + rng(seed, 2) * 0.60;
-    let lum = 0.35 + rng(seed, 3) * 0.30;
+    // Consistent saturation across the whole palette - no mixing saturated with desaturated
+    // Cap saturation: real planets are rarely neon, 0.20-0.55 covers the whole range
+    let sat = 0.20 + rng(seed, 2) * 0.35;
 
-    // Volcanic forces dark base and bright saturated lava alt
-    let base_color = if style == 4 {
-        hsl_to_rgb(hue, sat * 0.55, 0.10 + rng(seed, 3) * 0.08)
+    let hue_range = if style == 3 { 18.0 } else { 10.0 };
+    let alt_hue = (hue + (rng(seed, 4) * 2.0 - 1.0) * hue_range).rem_euclid(360.0);
+
+    // Lightness: strict monotone progression dark < mid < light < pale
+    // Raised floor to 0.20 so nothing goes near-black on non-volcanic styles
+    let lum_mid = 0.36 + rng(seed, 3) * 0.18;
+    let lum_dark = (lum_mid - 0.08 - rng(seed, 63) * 0.10).max(0.20);
+    let lum_light = (lum_mid + 0.16 + rng(seed, 64) * 0.12).min(0.86);
+    let lum_pale = (lum_light + 0.08 + rng(seed, 65) * 0.10).min(0.94);
+
+    // Saturation decreases with lightness
+    let sat_alt = (sat * (0.85 + rng(seed, 66) * 0.20)).min(1.0);
+    let sat_high = sat * (0.30 + rng(seed, 67) * 0.20);
+    let sat_pole = sat * (0.10 + rng(seed, 68) * 0.12);
+
+    let (base_color, alt_color, high_color, pole_color) = if style == 4 {
+        // Volcanic: dark crust + bright lava, lava stays near base hue
+        // Crust min 0.14 so it's dark but not pure black
+        let lava_hue = (hue + (rng(seed, 4) * 2.0 - 1.0) * 15.0).rem_euclid(360.0);
+        (
+            hsl_to_rgb(hue, sat * 0.45, 0.14 + rng(seed, 3) * 0.08),
+            hsl_to_rgb(lava_hue, (sat * 1.4).min(0.82), 0.48 + rng(seed, 69) * 0.10),
+            hsl_to_rgb(lava_hue, (sat * 1.5).min(0.85), 0.60 + rng(seed, 70) * 0.08),
+            hsl_to_rgb(hue, sat * 0.18, (lum_mid + 0.35).min(0.92)),
+        )
     } else {
-        hsl_to_rgb(hue, sat, lum)
+        (
+            hsl_to_rgb(hue, sat, lum_mid),
+            hsl_to_rgb(alt_hue, sat_alt, lum_dark),
+            hsl_to_rgb(hue, sat_high, lum_light),
+            hsl_to_rgb(hue, sat_pole, lum_pale),
+        )
     };
-
-    let alt_hue = (hue + 18.0 + rng(seed, 4) * 44.0) % 360.0;
-    let alt_color = if style == 4 {
-        hsl_to_rgb((hue + 15.0 + rng(seed, 4) * 30.0) % 360.0, 0.88, 0.52)
-    } else {
-        hsl_to_rgb(alt_hue, sat * (0.70 + rng(seed, 5) * 0.50), lum * (0.78 + rng(seed, 6) * 0.42))
-    };
-
-    // high_color: bright/light peaks, storm highlights, caldera glow
-    let high_color = if style == 4 {
-        hsl_to_rgb((hue + rng(seed, 50) * 25.0) % 360.0, 0.95, 0.65)
-    } else {
-        hsl_to_rgb(hue, (sat * 0.35).min(0.9), (lum + 0.22 + rng(seed, 50) * 0.14).min(0.95))
-    };
-
-    let pole_color = hsl_to_rgb(hue, (sat * 0.25).min(0.9), (lum + 0.25 + rng(seed, 7) * 0.15).min(1.0));
 
     let no = rng(seed, 9) * 800.0 + 50.0;
     let no2 = rng(seed, 62) * 800.0 + 50.0;
@@ -135,7 +147,7 @@ pub fn make(seed: u64) -> RandomPlanet {
     let ring = if rng(seed, 11) < 0.35 {
         let ring_inner = 1.20 + rng(seed, 12) * 0.30;
         let ring_outer = ring_inner + 0.50 + rng(seed, 13) * 0.80;
-        let ring_hue = (hue + rng(seed, 14) * 60.0 - 30.0).rem_euclid(360.0);
+        let ring_hue = (hue + (rng(seed, 14) * 2.0 - 1.0) * 12.0).rem_euclid(360.0);
         Some(RingConfig {
             inner: ring_inner,
             outer: ring_outer,
