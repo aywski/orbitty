@@ -12,7 +12,7 @@ pub struct Cell {
 }
 
 impl Cell {
-    fn blank() -> Cell {
+    const fn blank() -> Cell {
         Cell { fg: Rgb(0, 0, 0), bg: Rgb(0, 0, 0), ch: ' ' }
     }
 }
@@ -35,30 +35,20 @@ pub struct Scene<'a> {
     pub zoom: f64,
     pub planet_name: &'a str,
     pub show_help: bool,
+    pub planet_seed: Option<u64>,
+    pub seed_input: Option<&'a str>,
 }
 
-// View basis vectors (right, up, look_toward_planet) from orbit parameters.
 fn view_basis(orbit_angle: f64, orbit_tilt: f64) -> ([f64; 3], [f64; 3], [f64; 3]) {
     let (oa_s, oa_c) = orbit_angle.sin_cos();
     let (ot_s, ot_c) = orbit_tilt.sin_cos();
-
-    // Camera sits at this direction from planet center.
     let cam = [oa_s * ot_c, ot_s, oa_c * ot_c];
-
-    // Look direction: toward planet = -cam.
     let look = [-cam[0], -cam[1], -cam[2]];
-
-    // right = cross(look, world_up), world_up = (0,1,0)
-    // cross((lx,ly,lz), (0,1,0)) = (ly*0 - lz*1, lz*0 - lx*0, lx*1 - ly*0) = (-lz, 0, lx)
     let rx = -look[2];
-    let ry = 0.0;
     let rz = look[0];
     let rlen = (rx * rx + rz * rz).sqrt().max(1e-8);
-    let right = [rx / rlen, ry, rz / rlen];
-
-    // true_up = cross(right, look)
+    let right = [rx / rlen, 0.0, rz / rlen];
     let up = cross3(right, look);
-
     (right, up, look)
 }
 
@@ -69,17 +59,15 @@ fn normal_to_lonlat(nx: f64, ny: f64, nz: f64, spin: f64) -> (f64, f64) {
     (lat, lon)
 }
 
-// Star brightness/color.
-fn star_brightness(i: usize) -> (u8, u8) {
+fn star_color(i: usize) -> Rgb {
     let h = star_rand(i as u32 * 3 + 2, 29);
-    let b = if h < 0.08 {
-        (180u8, 0u8)  // bright white
+    if h < 0.08 {
+        Rgb(180, 180, 180)
     } else if h < 0.35 {
-        (120u8, 1u8)  // medium warm
+        Rgb(120, 108, 90)
     } else {
-        (70u8, 2u8)   // dim blue-white
-    };
-    b
+        Rgb(60, 63, 70)
+    }
 }
 
 // Persistent per-pixel trail buffer: (r, g, b) at full saturation + intensity in [0, 1].
@@ -128,19 +116,12 @@ pub fn render(scene: &Scene, trail: &mut TrailBuf) -> Vec<Cell> {
         let icy = (y_frac * height as f64) as i64;
         if icx < 0 || icx >= width as i64 || icy < 0 || icy >= height as i64 { continue; }
 
-        let (brightness, kind) = star_brightness(i);
-        let color = match kind {
-            0 => Rgb(brightness, brightness, brightness),
-            1 => Rgb(brightness, (brightness as f64 * 0.9) as u8, (brightness as f64 * 0.75) as u8),
-            _ => Rgb((brightness as f64 * 0.85) as u8, (brightness as f64 * 0.9) as u8, brightness),
-        };
+        let color = star_color(i);
         let size = star_rand(i as u32 * 3 + 5, 41);
         star_layer[icy as usize * width + icx as usize] = Some((color, size < 0.10));
     }
 
-    let has_rings = scene.planet.has_rings();
-    let ring_inner = 1.25;
-    let ring_outer = 2.10;
+    let ring_cfg = scene.planet.ring_config();
 
     for py in 0..pixel_h {
         for px in 0..width {
@@ -155,8 +136,6 @@ pub fn render(scene: &Scene, trail: &mut TrailBuf) -> Vec<Cell> {
                 let z_front = (1.0 - r2).sqrt();
                 sphere_z = z_front;
 
-                // Reconstruct world-space normal: screen coords (dx, dy) with z_front = z_cam+.
-                // n_world = dx*right + dy*up + z_front*(-look)
                 let nx = dx * right[0] + dy * up[0] + z_front * (-look[0]);
                 let ny = dx * right[1] + dy * up[1] + z_front * (-look[1]);
                 let nz = dx * right[2] + dy * up[2] + z_front * (-look[2]);
@@ -164,31 +143,21 @@ pub fn render(scene: &Scene, trail: &mut TrailBuf) -> Vec<Cell> {
                 let (lat, lon) = normal_to_lonlat(nx, ny, nz, scene.spin);
                 let color = scene.planet.surface_color(lat, lon);
                 let lit = lighting::compute(nx, ny, nz, SUN_DIR);
-
-                // Limb darkening: edges are darker (shadow effect)
                 let limb = z_front.powf(0.3).max(0.18);
                 sphere_color = Some(color.scale(lit * limb));
             }
 
-            // Rings (Saturn).
             let mut ring_pixel: Option<(Rgb, f64)> = None;
-            if has_rings {
-                // Ring plane is body Y=0. We need to intersect the ray.
-                // Ray in world: P(t) = (dx*right + dy*up) + t*(-look), orthographic.
-                // n_world = dx*right + dy*up + t*(-look).
-                // y_world = 0: dx*up[1] + dy*up[1] ... no wait:
-                // y_world = dx*right[1] + dy*up[1] + t*(-look[1]) = 0
-                // t = (dx*right[1] + dy*up[1]) / look[1]
+            if let Some(ref rcfg) = ring_cfg {
                 if look[1].abs() > 1e-4 {
                     let t_ring = (dx * right[1] + dy * up[1]) / look[1];
-                    // World pos of ring hit: P = dx*right + dy*up + t*(-look)
                     let rx_w = dx * right[0] + dy * up[0] + t_ring * (-look[0]);
                     let rz_w = dx * right[2] + dy * up[2] + t_ring * (-look[2]);
                     let ring_r = (rx_w * rx_w + rz_w * rz_w).sqrt();
 
-                    if ring_r >= ring_inner && ring_r <= ring_outer {
+                    if ring_r >= rcfg.inner && ring_r <= rcfg.outer {
                         let ring_phi = rz_w.atan2(rx_w);
-                        let ring_c = ring_shade(ring_r, ring_inner, ring_outer, ring_phi, scene.spin);
+                        let ring_c = ring_shade(ring_r, rcfg.inner, rcfg.outer, ring_phi, scene.spin, &rcfg.colors);
                         ring_pixel = Some((ring_c, t_ring));
                     }
                 }
@@ -230,6 +199,12 @@ pub fn render(scene: &Scene, trail: &mut TrailBuf) -> Vec<Cell> {
     }
 
     draw_title(&mut cells, width, scene.planet_name);
+    if let Some(seed) = scene.planet_seed {
+        draw_seed(&mut cells, width, seed);
+    }
+    if let Some(input) = scene.seed_input {
+        draw_seed_input(&mut cells, width, height, input);
+    }
     if scene.show_help {
         draw_help(&mut cells, width, height);
     }
@@ -321,14 +296,9 @@ fn render_moons(
     }
 }
 
-fn ring_shade(r: f64, inner: f64, outer: f64, phi: f64, spin: f64) -> Rgb {
+fn ring_shade(r: f64, inner: f64, outer: f64, phi: f64, spin: f64, colors: &[Rgb; 5]) -> Rgb {
     let t = (r - inner) / (outer - inner);
-
     let stops = [0.0_f64, 0.30, 0.50, 0.65, 0.80, 1.00];
-    let colors = [
-        Rgb(215, 190, 145), Rgb(175, 145, 100), Rgb(210, 185, 140),
-        Rgb(165, 135, 95),  Rgb(205, 178, 132),
-    ];
 
     let mut c = colors[0];
     for i in 0..stops.len() - 1 {
@@ -340,8 +310,7 @@ fn ring_shade(r: f64, inner: f64, outer: f64, phi: f64, spin: f64) -> Rgb {
     }
 
     let edge = ((t - 0.85) / 0.15).clamp(0.0, 1.0);
-
-    // Keplerian motion: inner rings orbit faster, creating slowly sweeping brightness variation.
+    // Keplerian shimmer: inner rings orbit faster
     let angle = phi + spin * 1.2 / r.powf(1.5);
     let shimmer = angle.cos() * 0.08 + (angle * 2.5).cos() * 0.04;
 
@@ -366,23 +335,40 @@ fn pixels_to_cells(pixels: &[Option<Rgb>], width: usize, pixel_h: usize) -> Vec<
     cells
 }
 
+fn put_str(cells: &mut [Cell], width: usize, row: usize, col0: usize, text: &str, fg: Rgb, bg: Rgb) {
+    for (i, ch) in text.chars().enumerate() {
+        let col = col0 + i;
+        if col >= width { break; }
+        cells[row * width + col] = Cell { fg, bg, ch };
+    }
+}
+
 fn draw_title(cells: &mut [Cell], width: usize, name: &str) {
     let label = format!("  {}  ", name.to_uppercase());
     let w = label.chars().count();
     if w + 2 >= width { return; }
     let start = (width - w) / 2;
-    let fg = Rgb(230, 230, 240);
+    put_str(cells, width, 0, start, &label, Rgb(230, 230, 240), Rgb(0, 0, 0));
+    let bracket = Rgb(120, 120, 160);
     let bg = Rgb(0, 0, 0);
-    for (i, ch) in label.chars().enumerate() {
-        let col = start + i;
-        if col < width {
-            cells[col] = Cell { fg, bg, ch };
-        }
-    }
     let left = start.saturating_sub(1);
     let right = start + w;
-    if left < width { cells[left] = Cell { fg: Rgb(120, 120, 160), bg: Rgb(0, 0, 0), ch: '[' }; }
-    if right < width { cells[right] = Cell { fg: Rgb(120, 120, 160), bg: Rgb(0, 0, 0), ch: ']' }; }
+    if left < width { cells[left] = Cell { fg: bracket, bg, ch: '[' }; }
+    if right < width { cells[right] = Cell { fg: bracket, bg, ch: ']' }; }
+}
+
+fn draw_seed(cells: &mut [Cell], width: usize, seed: u64) {
+    let label = format!("{:016x}", seed);
+    let col0 = width.saturating_sub(label.len() + 1);
+    put_str(cells, width, 0, col0, &label, Rgb(65, 65, 78), Rgb(0, 0, 0));
+}
+
+fn draw_seed_input(cells: &mut [Cell], width: usize, height: usize, input: &str) {
+    let prompt = format!(" seed: {}_ ", input);
+    let w = prompt.chars().count();
+    if w + 2 >= width || height < 3 { return; }
+    let col0 = (width.saturating_sub(w)) / 2;
+    put_str(cells, width, height - 2, col0, &prompt, Rgb(220, 220, 240), Rgb(30, 30, 45));
 }
 
 fn draw_help(cells: &mut [Cell], width: usize, height: usize) {
@@ -392,7 +378,8 @@ fn draw_help(cells: &mut [Cell], width: usize, height: usize) {
         " 1-8    switch planet",
         " +  -   zoom in / out",
         " [  ]   rotation speed",
-        " r      reset rotation",
+        " r      random planet",
+        " s      enter seed",
         " h      toggle this help",
         " q      quit (or close help)",
     ];

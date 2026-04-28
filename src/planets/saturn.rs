@@ -5,7 +5,16 @@ use super::{Planet, Moon, noise2};
 pub struct Saturn;
 
 impl Planet for Saturn {
-    fn has_rings(&self) -> bool { true }
+    fn ring_config(&self) -> Option<super::RingConfig> {
+        Some(super::RingConfig {
+            inner: 1.25,
+            outer: 2.10,
+            colors: [
+                Rgb(215, 190, 145), Rgb(175, 145, 100), Rgb(210, 185, 140),
+                Rgb(165, 135, 95), Rgb(205, 178, 132),
+            ],
+        })
+    }
 
     fn moons(&self) -> Vec<Moon> {
         // All inner moons start beyond the rings (outer ring at 2.10 radii)

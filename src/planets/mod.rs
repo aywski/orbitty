@@ -6,9 +6,18 @@ mod neptune;
 mod saturn;
 mod uranus;
 mod venus;
+pub mod random;
 
 use crate::palette::Rgb;
 
+#[derive(Clone, Copy)]
+pub struct RingConfig {
+    pub inner: f64,
+    pub outer: f64,
+    pub colors: [Rgb; 5],
+}
+
+#[derive(Clone)]
 pub struct Moon {
     pub color: Rgb,
     pub radius: f64,         // display radius in planet-radius units
@@ -24,8 +33,8 @@ pub trait Planet: Send + Sync {
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb;
 
     // Optional: render extra geometry (rings etc) around the sphere
-    fn has_rings(&self) -> bool {
-        false
+    fn ring_config(&self) -> Option<RingConfig> {
+        None
     }
 
     fn moons(&self) -> Vec<Moon> {
@@ -73,6 +82,12 @@ impl PlanetId {
     }
 }
 
+pub fn make_random(seed: u64) -> (Box<dyn Planet>, String) {
+    let rp = random::make(seed);
+    let name = rp.name.clone();
+    (Box::new(rp), name)
+}
+
 pub fn get(id: PlanetId) -> Box<dyn Planet> {
     match id {
         PlanetId::Mercury => Box::new(mercury::Mercury),
@@ -86,25 +101,17 @@ pub fn get(id: PlanetId) -> Box<dyn Planet> {
     }
 }
 
-// Wrap longitude to [-PI, PI]
 pub fn wrap_lon(lon: f64) -> f64 {
     use std::f64::consts::PI;
-    let mut l = lon % (2.0 * PI);
-    if l > PI {
-        l -= 2.0 * PI;
-    }
-    if l < -PI {
-        l += 2.0 * PI;
-    }
-    l
+    (lon + PI).rem_euclid(2.0 * PI) - PI
 }
 
 // Simple value noise for procedural surfaces
 pub fn noise2(x: f64, y: f64) -> f64 {
     let ix = x.floor() as i64;
     let iy = y.floor() as i64;
-    let fx = x - x.floor();
-    let fy = y - y.floor();
+    let fx = x - ix as f64;
+    let fy = y - iy as f64;
     let ux = fx * fx * (3.0 - 2.0 * fx);
     let uy = fy * fy * (3.0 - 2.0 * fy);
 

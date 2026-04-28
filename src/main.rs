@@ -1,9 +1,9 @@
-mod orbital;
 mod renderer;
 mod lighting;
 mod palette;
 mod planets;
 
+use std::f64::consts::PI;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 use clap::Parser;
@@ -62,19 +62,40 @@ fn main() {
     }
 }
 
-// Discrete speed levels: negative = reverse, 0 = stopped, positive = forward.
 const SPEEDS: &[f64] = &[-32.0, -16.0, -8.0, -4.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
 const DEFAULT_SPEED_IDX: usize = 11; // 1.0
+const SPIN_RATE: f64 = 2.0 * PI / 30.0;
+
+struct RandomState {
+    seed: u64,
+    planet: Box<dyn planets::Planet>,
+    name: String,
+}
+
+fn gen_seed() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let mut h = t.as_secs().wrapping_mul(6364136223846793005)
+        .wrapping_add(t.subsec_nanos() as u64);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51afd7ed558ccd);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
+    h ^= h >> 33;
+    h
+}
 
 fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
     let frame_duration = Duration::from_secs_f64(1.0 / fps as f64);
 
     let mut current_planet = PlanetId::Earth;
+    let mut current_planet_box: Box<dyn planets::Planet> = planets::get(current_planet);
+    let mut random_state: Option<RandomState> = None;
+    let mut seed_input: Option<String> = None;
     let mut speed_idx: usize = DEFAULT_SPEED_IDX;
     let mut zoom: f64 = 0.57;
     let mut show_help: bool = false;
     let mut orbit_angle: f64 = 0.0;
-    // Accumulated spin angle - updated incrementally so speed changes don't jump.
     let mut spin_accum: f64 = 0.0;
 
     let mut prev_frame: Vec<renderer::Cell> = Vec::new();
@@ -83,13 +104,53 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
 
     loop {
         while event::poll(Duration::ZERO)? {
+            // Seed input mode: only handle input-related keys
+            if seed_input.is_some() {
+                match event::read()? {
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char('c'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    }) => return Ok(()),
+                    Event::Key(KeyEvent { code: KeyCode::Esc, .. }) => {
+                        seed_input = None;
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Enter, .. }) => {
+                        if let Some(ref s) = seed_input {
+                            if let Ok(parsed) = u64::from_str_radix(s, 16) {
+                                let (planet, name) = planets::make_random(parsed);
+                                random_state = Some(RandomState { seed: parsed, planet, name });
+                                spin_accum = 0.0;
+                                trail.clear();
+                            }
+                        }
+                        seed_input = None;
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Backspace, .. }) => {
+                        if let Some(ref mut s) = seed_input {
+                            s.pop();
+                        }
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) => {
+                        if c.is_ascii_hexdigit() {
+                            if let Some(ref mut s) = seed_input {
+                                if s.len() < 16 {
+                                    s.push(c.to_ascii_lowercase());
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
             match event::read()? {
                 Event::Key(KeyEvent {
                     code: KeyCode::Char('c'),
                     modifiers: KeyModifiers::CONTROL,
                     ..
                 }) => return Ok(()),
-                // 'q'/'й', 'h'/'р', etc. - Latin and Russian layout equivalents.
                 Event::Key(KeyEvent { code: KeyCode::Char('q' | 'й'), .. }) => {
                     if show_help { show_help = false; } else { return Ok(()); }
                 }
@@ -112,11 +173,19 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
                     speed_idx = speed_idx.saturating_sub(1);
                 }
                 Event::Key(KeyEvent { code: KeyCode::Char('r' | 'к'), .. }) => {
+                    let seed = gen_seed();
+                    let (planet, name) = planets::make_random(seed);
+                    random_state = Some(RandomState { seed, planet, name });
                     spin_accum = 0.0;
                     trail.clear();
                 }
+                Event::Key(KeyEvent { code: KeyCode::Char('s' | 'ы'), .. }) => {
+                    seed_input = Some(String::new());
+                }
                 Event::Key(KeyEvent { code: KeyCode::Char(c @ '1'..='8'), .. }) => {
                     current_planet = PlanetId::from_digit(c.to_digit(10).unwrap() as u8);
+                    current_planet_box = planets::get(current_planet);
+                    random_state = None;
                     spin_accum = 0.0;
                     trail.clear();
                 }
@@ -133,9 +202,7 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
         let dt = elapsed.as_secs_f64();
         last_frame = now;
 
-        spin_accum += orbital::spin_rate() * dt * SPEEDS[speed_idx];
-
-        let planet = planets::get(current_planet);
+        spin_accum += SPIN_RATE * dt * SPEEDS[speed_idx];
 
         let (cols, rows) = terminal::size()?;
         let width = cols as usize;
@@ -143,15 +210,24 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
 
         orbit_angle += 0.0003;
 
+        let (planet_dyn, planet_name, planet_seed): (&dyn planets::Planet, &str, Option<u64>) =
+            if let Some(ref rs) = random_state {
+                (rs.planet.as_ref(), rs.name.as_str(), Some(rs.seed))
+            } else {
+                (current_planet_box.as_ref(), current_planet.name(), None)
+            };
+
         let scene = renderer::Scene {
             width,
             height,
-            planet: &*planet,
+            planet: planet_dyn,
             spin: spin_accum,
             orbit_angle,
             zoom,
-            planet_name: current_planet.name(),
+            planet_name,
             show_help,
+            planet_seed,
+            seed_input: seed_input.as_deref(),
         };
         let frame = renderer::render(&scene, &mut trail);
         renderer::flush(stdout, &frame, &prev_frame, width, height)?;
