@@ -1,19 +1,18 @@
-mod renderer;
 mod lighting;
 mod palette;
 mod planets;
+mod renderer;
 
-use std::f64::consts::PI;
-use std::io::{self, Write};
-use std::time::{Duration, Instant};
 use clap::Parser;
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
-    execute,
-    terminal,
+    execute, terminal,
 };
 use planets::PlanetId;
+use std::f64::consts::PI;
+use std::io::{self, Write};
+use std::time::{Duration, Instant};
 
 #[derive(Parser)]
 #[command(name = "orbitty", about = "Spinning planets in your terminal")]
@@ -37,11 +36,7 @@ fn main() {
 
     let mut stdout = io::stdout();
     terminal::enable_raw_mode().expect("failed to enable raw mode");
-    execute!(
-        stdout,
-        terminal::EnterAlternateScreen,
-        cursor::Hide,
-    ).unwrap();
+    execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide,).unwrap();
 
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -62,7 +57,9 @@ fn main() {
     }
 }
 
-const SPEEDS: &[f64] = &[-32.0, -16.0, -8.0, -4.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
+const SPEEDS: &[f64] = &[
+    -32.0, -16.0, -8.0, -4.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0,
+];
 const DEFAULT_SPEED_IDX: usize = 11; // 1.0
 const SPIN_RATE: f64 = 2.0 * PI / 30.0;
 
@@ -72,10 +69,34 @@ struct RandomState {
     name: String,
 }
 
+struct FallingStarAnim {
+    sx: f64, // start x in cells
+    sy: f64, // start y in cells
+    nx: f64, // normalized direction
+    ny: f64,
+    speed: f64, // cells/second
+    age: f64,
+    lifetime: f64,
+}
+
+fn fs_rand(n: u64) -> f64 {
+    let mut h = n
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51afd7ed558ccd);
+    h ^= h >> 33;
+    (h as f64) / (u64::MAX as f64)
+}
+
 fn gen_seed() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    let mut h = t.as_secs().wrapping_mul(6364136223846793005)
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let mut h = t
+        .as_secs()
+        .wrapping_mul(6364136223846793005)
         .wrapping_add(t.subsec_nanos() as u64);
     h ^= h >> 33;
     h = h.wrapping_mul(0xff51afd7ed558ccd);
@@ -93,7 +114,7 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
     let mut random_state: Option<RandomState> = None;
     let mut seed_input: Option<String> = None;
     let mut speed_idx: usize = DEFAULT_SPEED_IDX;
-    let mut zoom: f64 = 0.57;
+    let mut zoom: f64 = 0.57 / (1.15 * 1.15);
     let mut show_help: bool = false;
     let mut orbit_angle: f64 = 0.0;
     let mut spin_accum: f64 = 0.0;
@@ -101,6 +122,11 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
     let mut prev_frame: Vec<renderer::Cell> = Vec::new();
     let mut trail: renderer::TrailBuf = Vec::new();
     let mut last_frame = Instant::now();
+    let mut time_accum: f64 = 0.0;
+    let mut fs_counter: u64 = gen_seed();
+    let mut fs_timer: f64 = 5.0 + fs_rand(fs_counter) * 20.0;
+    fs_counter += 1;
+    let mut active_fs: Option<FallingStarAnim> = None;
 
     loop {
         while event::poll(Duration::ZERO)? {
@@ -112,26 +138,41 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
                         modifiers: KeyModifiers::CONTROL,
                         ..
                     }) => return Ok(()),
-                    Event::Key(KeyEvent { code: KeyCode::Esc, .. }) => {
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Esc, ..
+                    }) => {
                         seed_input = None;
                     }
-                    Event::Key(KeyEvent { code: KeyCode::Enter, .. }) => {
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Enter,
+                        ..
+                    }) => {
                         if let Some(ref s) = seed_input {
                             if let Ok(parsed) = u64::from_str_radix(s, 16) {
                                 let (planet, name) = planets::make_random(parsed);
-                                random_state = Some(RandomState { seed: parsed, planet, name });
+                                random_state = Some(RandomState {
+                                    seed: parsed,
+                                    planet,
+                                    name,
+                                });
                                 spin_accum = 0.0;
                                 trail.clear();
                             }
                         }
                         seed_input = None;
                     }
-                    Event::Key(KeyEvent { code: KeyCode::Backspace, .. }) => {
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Backspace,
+                        ..
+                    }) => {
                         if let Some(ref mut s) = seed_input {
                             s.pop();
                         }
                     }
-                    Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) => {
+                    Event::Key(KeyEvent {
+                        code: KeyCode::Char(c),
+                        ..
+                    }) => {
                         if c.is_ascii_hexdigit() {
                             if let Some(ref mut s) = seed_input {
                                 if s.len() < 16 {
@@ -151,38 +192,73 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
                     modifiers: KeyModifiers::CONTROL,
                     ..
                 }) => return Ok(()),
-                Event::Key(KeyEvent { code: KeyCode::Char('q' | 'й'), .. }) => {
-                    if show_help { show_help = false; } else { return Ok(()); }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('q' | 'й'),
+                    ..
+                }) => {
+                    if show_help {
+                        show_help = false;
+                    } else {
+                        return Ok(());
+                    }
                 }
-                Event::Key(KeyEvent { code: KeyCode::Esc, .. }) => {
-                    if show_help { show_help = false; }
+                Event::Key(KeyEvent {
+                    code: KeyCode::Esc, ..
+                }) => {
+                    if show_help {
+                        show_help = false;
+                    }
                 }
-                Event::Key(KeyEvent { code: KeyCode::Char('h' | 'р'), .. }) => {
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('h' | 'р'),
+                    ..
+                }) => {
                     show_help = !show_help;
                 }
-                Event::Key(KeyEvent { code: KeyCode::Char('+' | '='), .. }) => {
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('+' | '='),
+                    ..
+                }) => {
                     zoom = (zoom * 1.15).min(4.0);
                 }
-                Event::Key(KeyEvent { code: KeyCode::Char('-' | '_'), .. }) => {
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('-' | '_'),
+                    ..
+                }) => {
                     zoom = (zoom / 1.15).max(0.3);
                 }
-                Event::Key(KeyEvent { code: KeyCode::Char(']' | 'ъ'), .. }) => {
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char(']' | 'ъ'),
+                    ..
+                }) => {
                     speed_idx = (speed_idx + 1).min(SPEEDS.len() - 1);
                 }
-                Event::Key(KeyEvent { code: KeyCode::Char('[' | 'х'), .. }) => {
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('[' | 'х'),
+                    ..
+                }) => {
                     speed_idx = speed_idx.saturating_sub(1);
                 }
-                Event::Key(KeyEvent { code: KeyCode::Char('r' | 'к'), .. }) => {
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('r' | 'к'),
+                    ..
+                }) => {
                     let seed = gen_seed();
                     let (planet, name) = planets::make_random(seed);
                     random_state = Some(RandomState { seed, planet, name });
                     spin_accum = 0.0;
                     trail.clear();
                 }
-                Event::Key(KeyEvent { code: KeyCode::Char('s' | 'ы'), .. }) => {
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('s' | 'ы'),
+                    ..
+                }) => {
                     seed_input = Some(String::new());
                 }
-                Event::Key(KeyEvent { code: KeyCode::Char(c @ '1'..='8'), .. }) => {
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char(c @ '1'..='8'),
+                    ..
+                }) => {
                     current_planet = PlanetId::from_digit(c.to_digit(10).unwrap() as u8);
                     current_planet_box = planets::get(current_planet);
                     random_state = None;
@@ -201,6 +277,7 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
         }
         let dt = elapsed.as_secs_f64();
         last_frame = now;
+        time_accum += dt;
 
         spin_accum += SPIN_RATE * dt * SPEEDS[speed_idx];
 
@@ -208,7 +285,70 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
         let width = cols as usize;
         let height = rows as usize;
 
-        orbit_angle += 0.0003;
+        orbit_angle += 0.009 * dt;
+
+        // Update falling star
+        if let Some(ref mut fs) = active_fs {
+            fs.age += dt;
+            if fs.age >= fs.lifetime {
+                active_fs = None;
+            }
+        }
+        fs_timer -= dt;
+        if fs_timer <= 0.0 && active_fs.is_none() {
+            let r0 = fs_rand(fs_counter);
+            let r1 = fs_rand(fs_counter + 1);
+            let r2 = fs_rand(fs_counter + 2);
+            let r3 = fs_rand(fs_counter + 3);
+            fs_counter += 4;
+            // Pick edge: 0 = left, 1 = right, 2 = top
+            let edge = (r0 * 3.0) as u8;
+            // Angle: 10-30 degrees below horizontal
+            let angle = (10.0 + r1 * 20.0) * PI / 180.0;
+            // Avoid corners: keep 15% margin from each end of the edge
+            let margin = 0.15;
+            let (nx, ny, sx, sy) = match edge {
+                0 => {
+                    let sy = (margin + r2 * (1.0 - 2.0 * margin)) * height as f64;
+                    (angle.cos(), angle.sin(), 0.0, sy)
+                }
+                1 => {
+                    let sy = (margin + r2 * (1.0 - 2.0 * margin)) * height as f64;
+                    (-angle.cos(), angle.sin(), width as f64 - 1.0, sy)
+                }
+                _ => {
+                    let dir = if r3 < 0.5 { 1.0_f64 } else { -1.0_f64 };
+                    let sx = (margin + r2 * (1.0 - 2.0 * margin)) * width as f64;
+                    (dir * angle.cos(), angle.sin(), sx, 0.0)
+                }
+            };
+            let speed = 35.0 + fs_rand(fs_counter) * 30.0;
+            fs_counter += 1;
+            // Ensure star flies for at least 1 second
+            let min_lifetime = (width as f64 * 1.3) / speed;
+            let lifetime = min_lifetime.max(1.0);
+            active_fs = Some(FallingStarAnim { sx, sy, nx, ny, speed, age: 0.0, lifetime });
+            fs_timer = 50.0 + fs_rand(fs_counter) * 20.0;
+            fs_counter += 1;
+        }
+
+        let falling_star = active_fs.as_ref().map(|fs| {
+            let hx = fs.sx + fs.nx * fs.speed * fs.age;
+            let hy = fs.sy + fs.ny * fs.speed * fs.age;
+            let progress = fs.age / fs.lifetime;
+            let alpha = if progress < 0.1 {
+                progress / 0.1
+            } else if progress > 0.8 {
+                (1.0 - progress) / 0.2
+            } else {
+                1.0
+            };
+            renderer::FallingStar {
+                hx,
+                hy,
+                alpha,
+            }
+        });
 
         let (planet_dyn, planet_name, planet_seed): (&dyn planets::Planet, &str, Option<u64>) =
             if let Some(ref rs) = random_state {
@@ -228,6 +368,8 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
             show_help,
             planet_seed,
             seed_input: seed_input.as_deref(),
+            time: time_accum,
+            falling_star,
         };
         let frame = renderer::render(&scene, &mut trail);
         renderer::flush(stdout, &frame, &prev_frame, width, height)?;

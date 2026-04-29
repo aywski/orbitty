@@ -5,15 +5,14 @@ use super::{Planet, Moon, RingConfig, noise2};
 pub struct RandomPlanet {
     pub name: String,
     base_color: Rgb,    // dominant surface / ocean
-    alt_color: Rgb,     // secondary terrain / band color
-    high_color: Rgb,    // highlands / peaks / storm features
-    pole_color: Rgb,    // polar caps and cold zones
-    style: u8,          // 0=rocky 1=banded 2=smooth 3=terrestrial 4=volcanic
+    alt_color: Rgb,     // secondary terrain
+    high_color: Rgb,    // highlands / peaks
+    pole_color: Rgb,    // polar caps
+    style: u8,          // 0=rocky 1=smooth 2=terrestrial 3=volcanic
     ring: Option<RingConfig>,
     stored_moons: Vec<Moon>,
     no: f64,            // primary noise offset
     no2: f64,           // secondary noise offset (domain warp / detail)
-    band_freq: f64,
     terrain_scale: f64,
     polar_strength: f64,
 }
@@ -97,14 +96,14 @@ fn gen_ring_colors(hue: f64, seed: u64) -> [Rgb; 5] {
 }
 
 pub fn make(seed: u64) -> RandomPlanet {
-    let style = (rng(seed, 8) * 5.0) as u8;
+    let style = (rng(seed, 8) * 4.0) as u8; // 0=rocky 1=smooth 2=terrestrial 3=volcanic
 
     let hue = rng(seed, 1) * 360.0;
     // Consistent saturation across the whole palette - no mixing saturated with desaturated
     // Cap saturation: real planets are rarely neon, 0.20-0.55 covers the whole range
     let sat = 0.20 + rng(seed, 2) * 0.35;
 
-    let hue_range = if style == 3 { 18.0 } else { 10.0 };
+    let hue_range = if style == 2 { 18.0 } else { 10.0 };
     let alt_hue = (hue + (rng(seed, 4) * 2.0 - 1.0) * hue_range).rem_euclid(360.0);
 
     // Lightness: strict monotone progression dark < mid < light < pale
@@ -119,7 +118,7 @@ pub fn make(seed: u64) -> RandomPlanet {
     let sat_high = sat * (0.30 + rng(seed, 67) * 0.20);
     let sat_pole = sat * (0.10 + rng(seed, 68) * 0.12);
 
-    let (base_color, alt_color, high_color, pole_color) = if style == 4 {
+    let (base_color, alt_color, high_color, pole_color) = if style == 3 {
         // Volcanic: dark crust + bright lava, lava stays near base hue
         // Crust min 0.14 so it's dark but not pure black
         let lava_hue = (hue + (rng(seed, 4) * 2.0 - 1.0) * 15.0).rem_euclid(360.0);
@@ -140,7 +139,6 @@ pub fn make(seed: u64) -> RandomPlanet {
 
     let no = rng(seed, 9) * 800.0 + 50.0;
     let no2 = rng(seed, 62) * 800.0 + 50.0;
-    let band_freq = 6.0 + rng(seed, 10) * 20.0;
     let terrain_scale = 1.8 + rng(seed, 60) * 2.2;
     let polar_strength = 0.40 + rng(seed, 61) * 0.55;
 
@@ -189,7 +187,6 @@ pub fn make(seed: u64) -> RandomPlanet {
         stored_moons,
         no,
         no2,
-        band_freq,
         terrain_scale,
         polar_strength,
     }
@@ -204,57 +201,22 @@ impl Planet for RandomPlanet {
             0 => {
                 // Rocky: FBM elevation map drives 4-stop color gradient
                 let h = fbm(lon * ts + no, lat * ts + no, 4);
-                // Fine surface roughness
                 let detail = (noise2(lon * ts * 7.0 + no2, lat * ts * 7.0 + no2) - 0.5) * 0.07;
-
                 let elev = (h + detail).clamp(0.0, 1.0);
                 let c = if elev < 0.28 {
-                    // Deep lowlands: darkened base
                     self.base_color.scale(0.55 + elev * 1.6)
                 } else if elev < 0.56 {
                     self.base_color.lerp(self.alt_color, (elev - 0.28) / 0.28)
                 } else if elev < 0.78 {
                     self.alt_color.lerp(self.high_color, (elev - 0.56) / 0.22)
                 } else {
-                    // Bright peaks
                     self.high_color.scale(0.90 + elev * 0.15)
                 };
-
                 c.lerp(self.pole_color, t_abs.powf(2.2) * self.polar_strength)
             }
 
             1 => {
-                // Banded gas giant: domain-warped turbulent bands, 3 colors + storm
-                let wx = (noise2(lon * 1.8 + no, lat * 1.8 + no) - 0.5) * 0.40;
-                let wy = (noise2(lon * 1.8 + no2, lat * 1.8 + no2) - 0.5) * 0.20;
-                let lat_w = lat + wx;
-
-                let band = (lat_w * self.band_freq).sin() * 0.50 + 0.50;
-                let harmonic = (lat_w * self.band_freq * 2.4 + no * 0.01).sin() * 0.14;
-                let tex = noise2(lon * 3.5 + no + wy * 20.0, lat_w * 7.0 + no) * 0.16;
-                let t = (band * 0.70 + harmonic * 0.50 + 0.50 + tex).clamp(0.0, 1.0);
-
-                let c = if t < 0.40 {
-                    self.base_color.lerp(self.alt_color, t / 0.40)
-                } else if t < 0.72 {
-                    self.alt_color.lerp(self.high_color, (t - 0.40) / 0.32)
-                } else {
-                    // bright zone highlight
-                    self.high_color.lerp(self.base_color, (t - 0.72) / 0.28)
-                };
-
-                // Storm oval: placed at a seed-derived position
-                let storm_lat = lat - (no * 0.0019 - 0.38);
-                let storm_lon = super::wrap_lon(lon - no2 * 0.0023);
-                let sd2 = (storm_lat / 0.11).powi(2) + (storm_lon / 0.22).powi(2);
-                let storm = if sd2 < 1.0 { (1.0 - sd2).powf(0.6) * 0.55 } else { 0.0 };
-                let c = c.lerp(self.high_color, storm);
-
-                c.lerp(self.pole_color, t_abs.powf(2.2) * self.polar_strength * 0.75)
-            }
-
-            2 => {
-                // Atmospheric/icy: swirling domain-warped noise over a pole-to-equator gradient
+                // Smooth/atmospheric: swirling domain-warped noise over a pole-to-equator gradient
                 let wx = (noise2(lon * 1.3 + no, lat * 1.9 + no) - 0.5) * 0.50;
                 let wy = (noise2(lon * 1.3 + no2, lat * 1.9 + no2) - 0.5) * 0.35;
                 let swirl = fbm(lon * 2.2 + wx * 0.7 + no, lat * 2.2 + wy * 0.7 + no, 3);
@@ -271,7 +233,7 @@ impl Planet for RandomPlanet {
                 c.lerp(self.pole_color, pole_t * self.polar_strength)
             }
 
-            3 => {
+            2 => {
                 // Terrestrial: FBM height map for ocean/coast/land/mountains
                 let h = fbm(lon * ts + no, lat * ts + no, 4);
                 let detail = noise2(lon * ts * 5.5 + no2, lat * ts * 5.5 + no2) * 0.12;
@@ -297,8 +259,8 @@ impl Planet for RandomPlanet {
                 c.lerp(self.pole_color, t_abs.powf(2.4) * self.polar_strength * 1.20)
             }
 
-            _ => {
-                // Volcanic: dark crust driven by FBM, lava in low areas, calderas at peaks
+            _ => { // 3: volcanic
+                // dark crust driven by FBM, lava in low areas, calderas at peaks
                 let h = fbm(lon * ts + no, lat * ts + no, 4);
                 let detail = noise2(lon * ts * 4.5 + no2, lat * ts * 4.5 + no2) * 0.14;
                 let elev = (h + detail * 0.5).clamp(0.0, 1.0);

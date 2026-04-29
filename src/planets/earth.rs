@@ -1,6 +1,6 @@
-use std::f64::consts::PI;
+use super::{Moon, Planet, noise2, wrap_lon};
 use crate::palette::Rgb;
-use super::{Planet, Moon, wrap_lon, noise2};
+use std::f64::consts::PI;
 
 pub struct Earth;
 
@@ -72,18 +72,27 @@ fn land_coverage(lat: f64, lon: f64) -> f64 {
 fn is_land(lat: f64, lon: f64) -> bool {
     let cov = land_coverage(lat, lon);
     // Add fractal coastline noise in the transition zone.
-    if cov > 0.85 { return true; }
-    if cov < 0.15 { return false; }
-    let n = (noise2(lon * 6.0, lat * 6.0) - 0.5) * 0.35
-          + (noise2(lon * 14.0, lat * 14.0) - 0.5) * 0.15;
+    if cov > 0.85 {
+        return true;
+    }
+    if cov < 0.15 {
+        return false;
+    }
+    let n =
+        (noise2(lon * 6.0, lat * 6.0) - 0.5) * 0.35 + (noise2(lon * 14.0, lat * 14.0) - 0.5) * 0.15;
     cov + n > 0.5
 }
 
 impl Planet for Earth {
     fn moons(&self) -> Vec<Moon> {
-        vec![
-            Moon { color: Rgb(188, 183, 170), radius: 0.08, orbital_radius: 2.8, inclination: 0.09, speed: 0.22, phase: 1.5 },
-        ]
+        vec![Moon {
+            color: Rgb(188, 183, 170),
+            radius: 0.08,
+            orbital_radius: 2.8,
+            inclination: 0.09,
+            speed: 0.22,
+            phase: 1.5,
+        }]
     }
 
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb {
@@ -100,8 +109,7 @@ impl Planet for Earth {
 
 fn land_color(lat: f64, lon: f64) -> Rgb {
     let abs_lat_d = lat.abs().to_degrees();
-    let n = noise2(lon * 3.0, lat * 3.0) * 0.7
-          + noise2(lon * 8.0, lat * 8.0) * 0.3;
+    let n = noise2(lon * 3.0, lat * 3.0) * 0.7 + noise2(lon * 8.0, lat * 8.0) * 0.3;
 
     if abs_lat_d < 12.0 {
         // Equatorial rainforest
@@ -126,8 +134,7 @@ fn land_color(lat: f64, lon: f64) -> Rgb {
 
 fn ocean_color(lat: f64, lon: f64) -> Rgb {
     let abs_lat = lat.abs();
-    let n = noise2(lon * 4.0, lat * 4.0) * 0.4
-          + noise2(lon * 11.0, lat * 11.0) * 0.2;
+    let n = noise2(lon * 4.0, lat * 4.0) * 0.4 + noise2(lon * 11.0, lat * 11.0) * 0.2;
     let t = (abs_lat / (PI / 2.0)).clamp(0.0, 1.0);
     let tropical = Rgb(28, 88, 155);
     let cold = Rgb(15, 42, 92);

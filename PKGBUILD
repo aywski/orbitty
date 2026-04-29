@@ -2,9 +2,9 @@
 pkgname=orbitty
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Terminal idle screensaver with spinning planets and real-time day/night terminator"
+pkgdesc="Terminal idle screensaver with spinning planets"
 arch=('x86_64' 'aarch64')
-url="https://github.com/YOUR_USERNAME/orbitty"
+url="https://github.com/aywski/orbitty"
 license=('MIT')
 depends=('gcc-libs')
 makedepends=('rust' 'cargo')

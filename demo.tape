@@ -1,14 +1,14 @@
-Outputdemo.gif
-SetFontSize16
-SetWidth1280
-SetHeight720
-SetPadding0
+Output demo.gif
+Set FontSize 16
+Set Width 1280
+Set Height 720
+Set Padding 0
 
 Hide
-Type"cargorun"
+Type "cargo run"
 Enter
-Sleep2s
-Type"["
-Sleep2s
+Sleep 2s
+Type "["
+Sleep 2s
 Show
-Sleep20s
+Sleep 20s
