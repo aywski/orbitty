@@ -8,7 +8,7 @@ Hide
 Type "cargo run"
 Enter
 Sleep 2s
-Type "["
+Type "]"
 Sleep 2s
 Show
 Sleep 20s

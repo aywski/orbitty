@@ -17,8 +17,57 @@ use std::time::{Duration, Instant};
 #[derive(Parser)]
 #[command(name = "orbitty", about = "Spinning planets in your terminal")]
 struct Args {
-    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u32).range(1..=240))]
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u32).range(1..=240),
+          help = "Frame rate (1-240)")]
     fps: u32,
+
+    #[arg(long, value_parser = parse_zoom,
+          help = "Initial zoom level (0.3-4.0, default 0.43)")]
+    zoom: Option<f64>,
+
+    #[arg(long, value_parser = parse_speed,
+          help = "Initial speed multiplier: one of -32 -16 -8 -4 -2 -1 -0.5 0 0.5 1 2 4 8 16 32 (default 4)")]
+    speed: Option<f64>,
+
+    #[arg(long, value_name = "PLANET",
+          help = "Planet to display: mercury, venus, earth, mars, jupiter, saturn, uranus, neptune, random, or a hex seed (e.g. 1a2b3c4d)")]
+    planet: Option<String>,
+}
+
+fn parse_zoom(s: &str) -> Result<f64, String> {
+    let v: f64 = s.parse().map_err(|_| format!("invalid zoom: {s}"))?;
+    if v < 0.3 || v > 4.0 {
+        return Err(format!("zoom must be between 0.3 and 4.0, got {v}"));
+    }
+    Ok(v)
+}
+
+fn parse_speed(s: &str) -> Result<f64, String> {
+    let v: f64 = s.parse().map_err(|_| format!("invalid speed: {s}"))?;
+    if !SPEEDS.iter().any(|&x| (x - v).abs() < 1e-9) {
+        let list = SPEEDS.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ");
+        return Err(format!("speed must be one of: {list}"));
+    }
+    Ok(v)
+}
+
+enum PlanetArg {
+    Named(PlanetId),
+    Seed(u64),
+}
+
+fn parse_planet_arg(s: &str) -> Option<PlanetArg> {
+    match s.to_ascii_lowercase().as_str() {
+        "mercury" => Some(PlanetArg::Named(PlanetId::Mercury)),
+        "venus" => Some(PlanetArg::Named(PlanetId::Venus)),
+        "earth" => Some(PlanetArg::Named(PlanetId::Earth)),
+        "mars" => Some(PlanetArg::Named(PlanetId::Mars)),
+        "jupiter" => Some(PlanetArg::Named(PlanetId::Jupiter)),
+        "saturn" => Some(PlanetArg::Named(PlanetId::Saturn)),
+        "uranus" => Some(PlanetArg::Named(PlanetId::Uranus)),
+        "neptune" => Some(PlanetArg::Named(PlanetId::Neptune)),
+        _ => u64::from_str_radix(s, 16).ok().map(PlanetArg::Seed),
+    }
 }
 
 fn check_truecolor() {
@@ -34,6 +83,13 @@ fn main() {
     check_truecolor();
     let args = Args::parse();
 
+    if let Some(s) = &args.planet {
+        if s != "random" && parse_planet_arg(s).is_none() {
+            eprintln!("error: unknown planet {:?}. Use mercury, venus, earth, mars, jupiter, saturn, uranus, neptune, random, or a hex seed.", s);
+            std::process::exit(1);
+        }
+    }
+
     let mut stdout = io::stdout();
     terminal::enable_raw_mode().expect("failed to enable raw mode");
     execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide,).unwrap();
@@ -46,7 +102,7 @@ fn main() {
         default_hook(info);
     }));
 
-    let result = run(&mut stdout, args.fps);
+    let result = run(&mut stdout, args);
 
     execute!(stdout, terminal::LeaveAlternateScreen, cursor::Show).unwrap();
     terminal::disable_raw_mode().unwrap();
@@ -60,7 +116,7 @@ fn main() {
 const SPEEDS: &[f64] = &[
     -32.0, -16.0, -8.0, -4.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0,
 ];
-const DEFAULT_SPEED_IDX: usize = 11; // 1.0
+const DEFAULT_SPEED_IDX: usize = 11; // 4.0
 const SPIN_RATE: f64 = 2.0 * PI / 30.0;
 
 struct RandomState {
@@ -70,11 +126,11 @@ struct RandomState {
 }
 
 struct FallingStarAnim {
-    sx: f64, // start x in cells
-    sy: f64, // start y in cells
-    nx: f64, // normalized direction
+    hx: f64,
+    hy: f64,
+    nx: f64,
     ny: f64,
-    speed: f64, // cells/second
+    speed: f64,
     age: f64,
     lifetime: f64,
 }
@@ -106,21 +162,40 @@ fn gen_seed() -> u64 {
     h
 }
 
-fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
-    let frame_duration = Duration::from_secs_f64(1.0 / fps as f64);
+fn run(stdout: &mut impl Write, args: Args) -> io::Result<()> {
+    let frame_duration = Duration::from_secs_f64(1.0 / args.fps as f64);
 
-    let mut current_planet = PlanetId::Earth;
-    let mut current_planet_box: Box<dyn planets::Planet> = planets::get(current_planet);
-    let mut random_state: Option<RandomState> = None;
+    let initial_zoom = args.zoom.unwrap_or(0.57 / (1.15 * 1.15));
+    let initial_speed_idx = args.speed.map(|v| {
+        SPEEDS.iter().position(|&x| (x - v).abs() < 1e-9).unwrap_or(DEFAULT_SPEED_IDX)
+    }).unwrap_or(DEFAULT_SPEED_IDX);
+
+    let (mut current_planet, mut current_planet_box, mut random_state) = match args.planet.as_deref() {
+        Some("random") => {
+            let seed = gen_seed();
+            let (planet, name) = planets::make_random(seed);
+            (PlanetId::Earth, planets::get(PlanetId::Earth), Some(RandomState { seed, planet, name }))
+        }
+        Some(s) => match parse_planet_arg(s) {
+            Some(PlanetArg::Named(id)) => (id, planets::get(id), None),
+            Some(PlanetArg::Seed(seed)) => {
+                let (planet, name) = planets::make_random(seed);
+                (PlanetId::Earth, planets::get(PlanetId::Earth), Some(RandomState { seed, planet, name }))
+            }
+            None => unreachable!(),
+        },
+        None => (PlanetId::Earth, planets::get(PlanetId::Earth), None),
+    };
+
     let mut seed_input: Option<String> = None;
-    let mut speed_idx: usize = DEFAULT_SPEED_IDX;
-    let mut zoom: f64 = 0.57 / (1.15 * 1.15);
+    let mut speed_idx: usize = initial_speed_idx;
+    let mut zoom: f64 = initial_zoom;
     let mut show_help: bool = false;
     let mut orbit_angle: f64 = 0.0;
     let mut spin_accum: f64 = 0.0;
 
     let mut prev_frame: Vec<renderer::Cell> = Vec::new();
-    let mut trail: renderer::TrailBuf = Vec::new();
+    let mut bufs = renderer::RenderBufs::new();
     let mut last_frame = Instant::now();
     let mut time_accum: f64 = 0.0;
     let mut fs_counter: u64 = gen_seed();
@@ -156,7 +231,7 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
                                     name,
                                 });
                                 spin_accum = 0.0;
-                                trail.clear();
+                                bufs.clear_trail();
                             }
                         }
                         seed_input = None;
@@ -247,7 +322,7 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
                     let (planet, name) = planets::make_random(seed);
                     random_state = Some(RandomState { seed, planet, name });
                     spin_accum = 0.0;
-                    trail.clear();
+                    bufs.clear_trail();
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char('s' | 'ы'),
@@ -263,7 +338,7 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
                     current_planet_box = planets::get(current_planet);
                     random_state = None;
                     spin_accum = 0.0;
-                    trail.clear();
+                    bufs.clear_trail();
                 }
                 _ => {}
             }
@@ -287,12 +362,11 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
 
         orbit_angle += 0.009 * dt;
 
-        // Update falling star
         if let Some(ref mut fs) = active_fs {
+            fs.hx += fs.nx * fs.speed * dt;
+            fs.hy += fs.ny * fs.speed * dt;
             fs.age += dt;
-            if fs.age >= fs.lifetime {
-                active_fs = None;
-            }
+            if fs.age >= fs.lifetime { active_fs = None; }
         }
         fs_timer -= dt;
         if fs_timer <= 0.0 && active_fs.is_none() {
@@ -301,40 +375,29 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
             let r2 = fs_rand(fs_counter + 2);
             let r3 = fs_rand(fs_counter + 3);
             fs_counter += 4;
-            // Pick edge: 0 = left, 1 = right, 2 = top
             let edge = (r0 * 3.0) as u8;
-            // Angle: 10-30 degrees below horizontal
             let angle = (10.0 + r1 * 20.0) * PI / 180.0;
-            // Avoid corners: keep 15% margin from each end of the edge
             let margin = 0.15;
-            let (nx, ny, sx, sy) = match edge {
-                0 => {
-                    let sy = (margin + r2 * (1.0 - 2.0 * margin)) * height as f64;
-                    (angle.cos(), angle.sin(), 0.0, sy)
-                }
-                1 => {
-                    let sy = (margin + r2 * (1.0 - 2.0 * margin)) * height as f64;
-                    (-angle.cos(), angle.sin(), width as f64 - 1.0, sy)
-                }
+            let (nx, ny, hx, hy) = match edge {
+                0 => (angle.cos(), angle.sin(), 0.0,
+                    (margin + r2 * (1.0 - 2.0 * margin)) * height as f64),
+                1 => (-angle.cos(), angle.sin(), width as f64 - 1.0,
+                    (margin + r2 * (1.0 - 2.0 * margin)) * height as f64),
                 _ => {
                     let dir = if r3 < 0.5 { 1.0_f64 } else { -1.0_f64 };
-                    let sx = (margin + r2 * (1.0 - 2.0 * margin)) * width as f64;
-                    (dir * angle.cos(), angle.sin(), sx, 0.0)
+                    (dir * angle.cos(), angle.sin(),
+                    (margin + r2 * (1.0 - 2.0 * margin)) * width as f64, 0.0)
                 }
             };
             let speed = 35.0 + fs_rand(fs_counter) * 30.0;
             fs_counter += 1;
-            // Ensure star flies for at least 1 second
-            let min_lifetime = (width as f64 * 1.3) / speed;
-            let lifetime = min_lifetime.max(1.0);
-            active_fs = Some(FallingStarAnim { sx, sy, nx, ny, speed, age: 0.0, lifetime });
+            let lifetime = ((width as f64 * 1.3) / speed).max(1.0);
+            active_fs = Some(FallingStarAnim { hx, hy, nx, ny, speed, age: 0.0, lifetime });
             fs_timer = 50.0 + fs_rand(fs_counter) * 20.0;
             fs_counter += 1;
         }
 
         let falling_star = active_fs.as_ref().map(|fs| {
-            let hx = fs.sx + fs.nx * fs.speed * fs.age;
-            let hy = fs.sy + fs.ny * fs.speed * fs.age;
             let progress = fs.age / fs.lifetime;
             let alpha = if progress < 0.1 {
                 progress / 0.1
@@ -343,11 +406,7 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
             } else {
                 1.0
             };
-            renderer::FallingStar {
-                hx,
-                hy,
-                alpha,
-            }
+            renderer::FallingStar { hx: fs.hx, hy: fs.hy, alpha }
         });
 
         let (planet_dyn, planet_name, planet_seed): (&dyn planets::Planet, &str, Option<u64>) =
@@ -371,7 +430,7 @@ fn run(stdout: &mut impl Write, fps: u32) -> io::Result<()> {
             time: time_accum,
             falling_star,
         };
-        let frame = renderer::render(&scene, &mut trail);
+        let frame = renderer::render(&scene, &mut bufs);
         renderer::flush(stdout, &frame, &prev_frame, width, height)?;
         prev_frame = frame;
     }

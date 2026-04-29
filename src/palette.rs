@@ -19,11 +19,4 @@ impl Rgb {
         )
     }
 
-    pub fn fg_seq(self) -> String {
-        format!("\x1b[38;2;{};{};{}m", self.0, self.1, self.2)
-    }
-
-    pub fn bg_seq(self) -> String {
-        format!("\x1b[48;2;{};{};{}m", self.0, self.1, self.2)
-    }
 }

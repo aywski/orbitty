@@ -12,11 +12,11 @@ fn wdlon(lon: f64, target: f64) -> f64 {
 }
 
 impl Planet for Neptune {
-    fn moons(&self) -> Vec<Moon> {
-        vec![
-            // Triton: retrograde (speed < 0) and high inclination (~157 deg = 2.74 rad)
+    fn moons(&self) -> &[Moon] {
+        static M: [Moon; 1] = [
             Moon { color: Rgb(195, 182, 172), radius: 0.062, orbital_radius: 3.10, inclination: 2.74, speed: -0.15, phase: 1.5 },
-        ]
+        ];
+        &M
     }
 
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb {

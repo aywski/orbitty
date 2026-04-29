@@ -16,9 +16,8 @@ impl Planet for Saturn {
         })
     }
 
-    fn moons(&self) -> Vec<Moon> {
-        // All inner moons start beyond the rings (outer ring at 2.10 radii)
-        vec![
+    fn moons(&self) -> &[Moon] {
+        static M: [Moon; 7] = [
             Moon { color: Rgb(210, 207, 202), radius: 0.038, orbital_radius: 2.35, inclination: 0.03, speed: 1.40, phase: 0.5 },
             Moon { color: Rgb(242, 242, 240), radius: 0.040, orbital_radius: 2.65, inclination: 0.02, speed: 0.95, phase: 2.5 },
             Moon { color: Rgb(222, 220, 215), radius: 0.042, orbital_radius: 2.90, inclination: 0.03, speed: 0.68, phase: 1.0 },
@@ -26,7 +25,8 @@ impl Planet for Saturn {
             Moon { color: Rgb(200, 197, 191), radius: 0.048, orbital_radius: 3.60, inclination: 0.04, speed: 0.30, phase: 0.8 },
             Moon { color: Rgb(208, 158, 85), radius: 0.072, orbital_radius: 4.60, inclination: 0.07, speed: 0.11, phase: 2.2 },
             Moon { color: Rgb(158, 152, 142), radius: 0.048, orbital_radius: 5.90, inclination: 0.26, speed: 0.035, phase: 3.7 },
-        ]
+        ];
+        &M
     }
 
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb {

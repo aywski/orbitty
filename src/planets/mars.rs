@@ -5,11 +5,12 @@ use super::{Planet, Moon, noise2, wrap_lon};
 pub struct Mars;
 
 impl Planet for Mars {
-    fn moons(&self) -> Vec<Moon> {
-        vec![
+    fn moons(&self) -> &[Moon] {
+        static M: [Moon; 2] = [
             Moon { color: Rgb(105, 96, 85), radius: 0.04, orbital_radius: 2.2, inclination: 0.02, speed: 1.2, phase: 0.0 },
             Moon { color: Rgb(122, 112, 100), radius: 0.038, orbital_radius: 3.2, inclination: 0.03, speed: 0.4, phase: 2.0 },
-        ]
+        ];
+        &M
     }
 
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb {

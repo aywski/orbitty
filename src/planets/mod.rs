@@ -17,28 +17,25 @@ pub struct RingConfig {
     pub colors: [Rgb; 5],
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Moon {
     pub color: Rgb,
-    pub radius: f64,         // display radius in planet-radius units
-    pub orbital_radius: f64, // display orbit distance in planet-radius units
-    pub inclination: f64,    // orbital plane tilt in radians (0 = equatorial plane)
-    pub speed: f64,          // angular speed relative to spin_accum (negative = retrograde)
-    pub phase: f64,          // initial orbital phase in radians
+    pub radius: f64,
+    pub orbital_radius: f64,
+    pub inclination: f64,
+    pub speed: f64,
+    pub phase: f64,
 }
 
 pub trait Planet: Send + Sync {
-    // Returns base surface color at (lat, lon) in radians.
-    // lat in [-PI/2, PI/2], lon in [-PI, PI] (may be outside, wrap as needed)
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb;
 
-    // Optional: render extra geometry (rings etc) around the sphere
     fn ring_config(&self) -> Option<RingConfig> {
         None
     }
 
-    fn moons(&self) -> Vec<Moon> {
-        vec![]
+    fn moons(&self) -> &[Moon] {
+        &[]
     }
 }
 

@@ -286,7 +286,7 @@ impl Planet for RandomPlanet {
         self.ring
     }
 
-    fn moons(&self) -> Vec<Moon> {
-        self.stored_moons.clone()
+    fn moons(&self) -> &[Moon] {
+        &self.stored_moons
     }
 }

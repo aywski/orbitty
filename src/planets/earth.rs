@@ -84,15 +84,16 @@ fn is_land(lat: f64, lon: f64) -> bool {
 }
 
 impl Planet for Earth {
-    fn moons(&self) -> Vec<Moon> {
-        vec![Moon {
+    fn moons(&self) -> &[Moon] {
+        static M: [Moon; 1] = [Moon {
             color: Rgb(188, 183, 170),
             radius: 0.08,
             orbital_radius: 2.8,
             inclination: 0.09,
             speed: 0.22,
             phase: 1.5,
-        }]
+        }];
+        &M
     }
 
     fn surface_color(&self, lat: f64, lon: f64) -> Rgb {
