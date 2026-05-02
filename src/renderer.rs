@@ -104,7 +104,7 @@ pub fn render(scene: &Scene, bufs: &mut RenderBufs) -> Vec<Cell> {
     let pixel_n = width * pixel_h;
 
     let base = (width.min(pixel_h) as f64) * 0.40;
-    let radius = (base * scene.zoom).max(1.0);
+    let radius = base * scene.zoom;
     let cx = width as f64 / 2.0;
     let cy = pixel_h as f64 / 2.0;
 
@@ -152,31 +152,33 @@ pub fn render(scene: &Scene, bufs: &mut RenderBufs) -> Vec<Cell> {
 
     let ring_cfg = scene.planet.ring_config();
 
-    for py in 0..pixel_h {
-        for px in 0..width {
-            let dx = (px as f64 - cx + 0.5) / radius;
-            let dy = -(py as f64 - cy + 0.5) / radius;
-            let r2 = dx * dx + dy * dy;
+    if radius >= 1.0 {
+        for py in 0..pixel_h {
+            for px in 0..width {
+                let dx = (px as f64 - cx + 0.5) / radius;
+                let dy = -(py as f64 - cy + 0.5) / radius;
+                let r2 = dx * dx + dy * dy;
 
-            let mut sphere_color: Option<Rgb> = None;
-            let mut sphere_z: f64 = f64::NEG_INFINITY;
+                let mut sphere_color: Option<Rgb> = None;
+                let mut sphere_z: f64 = f64::NEG_INFINITY;
 
-            if r2 <= 1.0 {
-                let z_front = (1.0 - r2).sqrt();
-                sphere_z = z_front;
-                let nx = dx * basis.right[0] + dy * basis.up[0] + z_front * (-basis.look[0]);
-                let ny = dx * basis.right[1] + dy * basis.up[1] + z_front * (-basis.look[1]);
-                let nz = dx * basis.right[2] + dy * basis.up[2] + z_front * (-basis.look[2]);
-                let (lat, lon) = normal_to_lonlat(nx, ny, nz, scene.spin);
-                let color = scene.planet.surface_color(lat, lon);
-                let lit = lighting::compute(nx, ny, nz, SUN_DIR);
-                let limb = z_front.powf(0.3).max(0.18);
-                sphere_color = Some(color.scale(lit * limb));
-            }
+                if r2 <= 1.0 {
+                    let z_front = (1.0 - r2).sqrt();
+                    sphere_z = z_front;
+                    let nx = dx * basis.right[0] + dy * basis.up[0] + z_front * (-basis.look[0]);
+                    let ny = dx * basis.right[1] + dy * basis.up[1] + z_front * (-basis.look[1]);
+                    let nz = dx * basis.right[2] + dy * basis.up[2] + z_front * (-basis.look[2]);
+                    let (lat, lon) = normal_to_lonlat(nx, ny, nz, scene.spin);
+                    let color = scene.planet.surface_color(lat, lon);
+                    let lit = lighting::compute(nx, ny, nz, SUN_DIR);
+                    let limb = z_front.powf(0.3).max(0.18);
+                    sphere_color = Some(color.scale(lit * limb));
+                }
 
-            let mut ring_pixel: Option<(Rgb, f64)> = None;
-            if let Some(ref rcfg) = ring_cfg {
-                if basis.look[1].abs() > 1e-4 {
+                let mut ring_pixel: Option<(Rgb, f64)> = None;
+                if let Some(ref rcfg) = ring_cfg
+                    && basis.look[1].abs() > 1e-4
+                {
                     let t_ring = (dx * basis.right[1] + dy * basis.up[1]) / basis.look[1];
                     let rx_w = dx * basis.right[0] + dy * basis.up[0] + t_ring * (-basis.look[0]);
                     let rz_w = dx * basis.right[2] + dy * basis.up[2] + t_ring * (-basis.look[2]);
@@ -186,21 +188,20 @@ pub fn render(scene: &Scene, bufs: &mut RenderBufs) -> Vec<Cell> {
                         ring_pixel = Some((ring_c, t_ring));
                     }
                 }
-            }
 
-            let chosen = match (sphere_color, ring_pixel) {
-                (Some(sc), Some((rc, rz))) => if rz > sphere_z { Some(rc) } else { Some(sc) },
-                (Some(sc), None) => Some(sc),
-                (None, Some((rc, _))) => Some(rc),
-                (None, None) => None,
-            };
-            if let Some(c) = chosen {
-                bufs.pixels[py * width + px] = Some(c);
+                let chosen = match (sphere_color, ring_pixel) {
+                    (Some(sc), Some((rc, rz))) => if rz > sphere_z { Some(rc) } else { Some(sc) },
+                    (Some(sc), None) => Some(sc),
+                    (None, Some((rc, _))) => Some(rc),
+                    (None, None) => None,
+                };
+                if let Some(c) = chosen {
+                    bufs.pixels[py * width + px] = Some(c);
+                }
             }
         }
+        render_moons(&mut bufs.pixels, &mut bufs.trail, width, pixel_h, cx, cy, radius, scene, &basis);
     }
-
-    render_moons(&mut bufs.pixels, &mut bufs.trail, width, pixel_h, cx, cy, radius, scene, &basis);
 
     if let Some(ref fs) = scene.falling_star {
         let px = fs.hx.round() as i64;
@@ -223,18 +224,16 @@ pub fn render(scene: &Scene, bufs: &mut RenderBufs) -> Vec<Cell> {
     let mut cells = pixels_to_cells(&bufs.pixels, width, pixel_h);
 
     for (idx, star) in bufs.star_layer.iter().enumerate() {
-        if let Some((color, small)) = star {
-            if cells[idx] == Cell::blank() {
-                let ch = if *small { '◉' } else { '●' };
-                cells[idx] = Cell { fg: *color, bg: Rgb(0, 0, 0), ch };
-            }
+        if let Some((color, small)) = star
+            && cells[idx] == Cell::blank()
+        {
+            let ch = if *small { '◉' } else { '●' };
+            cells[idx] = Cell { fg: *color, bg: Rgb(0, 0, 0), ch };
         }
     }
 
-    draw_title(&mut cells, width, scene.planet_name);
-    if let Some(seed) = scene.planet_seed {
-        draw_seed(&mut cells, width, seed);
-    }
+    draw_info_right(&mut cells, width, scene.planet_name, scene.planet_seed);
+    draw_datetime_left(&mut cells, width);
     if let Some(input) = scene.seed_input {
         draw_seed_input(&mut cells, width, height, input);
     }
@@ -260,6 +259,7 @@ fn moon_occluded(pos: [f64; 3], basis: &ViewBasis) -> bool {
     r2_screen <= 1.0 && dot3(pos, basis.look) > (1.0 - r2_world).max(0.0).sqrt()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_disc_sphere(
     pixels: &mut [Option<Rgb>],
     width: usize, pixel_h: usize,
@@ -288,9 +288,10 @@ fn draw_disc_sphere(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_moons(
     pixels: &mut [Option<Rgb>],
-    trail: &mut Vec<(Rgb, f32)>,
+    trail: &mut [(Rgb, f32)],
     width: usize, pixel_h: usize,
     cx: f64, cy: f64, radius: f64,
     scene: &Scene,
@@ -374,24 +375,44 @@ fn put_str(cells: &mut [Cell], width: usize, row: usize, col0: usize, text: &str
     }
 }
 
-fn draw_title(cells: &mut [Cell], width: usize, name: &str) {
-    let label = format!("  {}  ", name.to_uppercase());
-    let w = label.chars().count();
-    if w + 2 >= width { return; }
-    let start = (width - w) / 2;
-    put_str(cells, width, 0, start, &label, Rgb(230, 230, 240), Rgb(0, 0, 0));
-    let bracket = Rgb(120, 120, 160);
-    let bg = Rgb(0, 0, 0);
-    let left = start.saturating_sub(1);
-    let right = start + w;
-    if left < width { cells[left] = Cell { fg: bracket, bg, ch: '[' }; }
-    if right < width { cells[right] = Cell { fg: bracket, bg, ch: ']' }; }
+fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    let z = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m as u32, d as u32)
 }
 
-fn draw_seed(cells: &mut [Cell], width: usize, seed: u64) {
-    let label = format!("{:016x}", seed);
+fn utc_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let s = (secs % 60) as u32;
+    let m = ((secs / 60) % 60) as u32;
+    let h = ((secs / 3600) % 24) as u32;
+    let (year, month, day) = civil_from_days((secs / 86400) as i64);
+    format!("{:04}-{:02}-{:02}  {:02}:{:02}:{:02}", year, month, day, h, m, s)
+}
+
+fn draw_info_right(cells: &mut [Cell], width: usize, name: &str, seed: Option<u64>) {
+    let label = name.to_uppercase();
     let col0 = width.saturating_sub(label.len() + 1);
-    put_str(cells, width, 0, col0, &label, Rgb(65, 65, 78), Rgb(0, 0, 0));
+    put_str(cells, width, 0, col0, &label, Rgb(230, 230, 240), Rgb(0, 0, 0));
+    if let Some(s) = seed {
+        let hex = format!("{:016x}", s);
+        let col1 = width.saturating_sub(hex.len() + 1);
+        put_str(cells, width, 1, col1, &hex, Rgb(55, 55, 68), Rgb(0, 0, 0));
+    }
+}
+
+fn draw_datetime_left(cells: &mut [Cell], width: usize) {
+    let dt = utc_now();
+    put_str(cells, width, 0, 1, &dt, Rgb(230, 230, 240), Rgb(0, 0, 0));
 }
 
 fn draw_seed_input(cells: &mut [Cell], width: usize, height: usize, input: &str) {
@@ -412,7 +433,7 @@ fn draw_help(cells: &mut [Cell], width: usize, height: usize) {
         " r      random planet",
         " s      enter seed",
         " h      toggle this help",
-        " q      quit (or close help)",
+        " q      quit",
     ];
 
     let inner_w = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) + 4;

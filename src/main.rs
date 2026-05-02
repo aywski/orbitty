@@ -14,6 +14,28 @@ use std::f64::consts::PI;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
+enum AnimPhase {
+    Intro,
+    Idle,
+    SwitchOut,
+    SwitchIn,
+    Outro,
+}
+
+enum PendingSwitch {
+    Named { id: PlanetId, planet: Box<dyn planets::Planet> },
+    Random(RandomState),
+}
+
+const INTRO_DUR: f64 = 0.45;
+const SWITCH_DUR: f64 = 0.28;
+const OUTRO_DUR: f64 = 0.38;
+
+fn smoothstep(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 #[derive(Parser)]
 #[command(name = "orbitty", about = "Spinning planets in your terminal")]
 struct Args {
@@ -36,7 +58,7 @@ struct Args {
 
 fn parse_zoom(s: &str) -> Result<f64, String> {
     let v: f64 = s.parse().map_err(|_| format!("invalid zoom: {s}"))?;
-    if v < 0.3 || v > 4.0 {
+    if !(0.3..=4.0).contains(&v) {
         return Err(format!("zoom must be between 0.3 and 4.0, got {v}"));
     }
     Ok(v)
@@ -83,11 +105,11 @@ fn main() {
     check_truecolor();
     let args = Args::parse();
 
-    if let Some(s) = &args.planet {
-        if s != "random" && parse_planet_arg(s).is_none() {
-            eprintln!("error: unknown planet {:?}. Use mercury, venus, earth, mars, jupiter, saturn, uranus, neptune, random, or a hex seed.", s);
-            std::process::exit(1);
-        }
+    if let Some(s) = &args.planet
+        && s != "random" && parse_planet_arg(s).is_none()
+    {
+        eprintln!("error: unknown planet {:?}. Use mercury, venus, earth, mars, jupiter, saturn, uranus, neptune, random, or a hex seed.", s);
+        std::process::exit(1);
     }
 
     let mut stdout = io::stdout();
@@ -193,6 +215,9 @@ fn run(stdout: &mut impl Write, args: Args) -> io::Result<()> {
     let mut show_help: bool = false;
     let mut orbit_angle: f64 = 0.0;
     let mut spin_accum: f64 = 0.0;
+    let mut anim_phase = AnimPhase::Intro;
+    let mut anim_t: f64 = 0.0;
+    let mut pending_switch: Option<PendingSwitch> = None;
 
     let mut prev_frame: Vec<renderer::Cell> = Vec::new();
     let mut bufs = renderer::RenderBufs::new();
@@ -222,16 +247,18 @@ fn run(stdout: &mut impl Write, args: Args) -> io::Result<()> {
                         code: KeyCode::Enter,
                         ..
                     }) => {
-                        if let Some(ref s) = seed_input {
-                            if let Ok(parsed) = u64::from_str_radix(s, 16) {
-                                let (planet, name) = planets::make_random(parsed);
-                                random_state = Some(RandomState {
-                                    seed: parsed,
-                                    planet,
-                                    name,
-                                });
-                                spin_accum = 0.0;
-                                bufs.clear_trail();
+                        if let Some(ref s) = seed_input
+                            && let Ok(parsed) = u64::from_str_radix(s, 16)
+                        {
+                            let (planet, name) = planets::make_random(parsed);
+                            pending_switch = Some(PendingSwitch::Random(RandomState {
+                                seed: parsed,
+                                planet,
+                                name,
+                            }));
+                            if !matches!(anim_phase, AnimPhase::SwitchOut) {
+                                anim_phase = AnimPhase::SwitchOut;
+                                anim_t = 0.0;
                             }
                         }
                         seed_input = None;
@@ -240,20 +267,17 @@ fn run(stdout: &mut impl Write, args: Args) -> io::Result<()> {
                         code: KeyCode::Backspace,
                         ..
                     }) => {
-                        if let Some(ref mut s) = seed_input {
-                            s.pop();
-                        }
+                        if let Some(ref mut s) = seed_input { s.pop(); }
                     }
                     Event::Key(KeyEvent {
                         code: KeyCode::Char(c),
                         ..
                     }) => {
-                        if c.is_ascii_hexdigit() {
-                            if let Some(ref mut s) = seed_input {
-                                if s.len() < 16 {
-                                    s.push(c.to_ascii_lowercase());
-                                }
-                            }
+                        if c.is_ascii_hexdigit()
+                            && let Some(ref mut s) = seed_input
+                            && s.len() < 16
+                        {
+                            s.push(c.to_ascii_lowercase());
                         }
                     }
                     _ => {}
@@ -267,22 +291,12 @@ fn run(stdout: &mut impl Write, args: Args) -> io::Result<()> {
                     modifiers: KeyModifiers::CONTROL,
                     ..
                 }) => return Ok(()),
-                Event::Key(KeyEvent {
-                    code: KeyCode::Char('q' | 'й'),
-                    ..
-                }) => {
-                    if show_help {
-                        show_help = false;
-                    } else {
-                        return Ok(());
-                    }
+                Event::Key(KeyEvent { code: KeyCode::Char('q' | 'й'), .. }) => {
+                    anim_phase = AnimPhase::Outro;
+                    anim_t = 0.0;
                 }
-                Event::Key(KeyEvent {
-                    code: KeyCode::Esc, ..
-                }) => {
-                    if show_help {
-                        show_help = false;
-                    }
+                Event::Key(KeyEvent { code: KeyCode::Esc, .. }) if show_help => {
+                    show_help = false;
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char('h' | 'р'),
@@ -320,9 +334,11 @@ fn run(stdout: &mut impl Write, args: Args) -> io::Result<()> {
                 }) => {
                     let seed = gen_seed();
                     let (planet, name) = planets::make_random(seed);
-                    random_state = Some(RandomState { seed, planet, name });
-                    spin_accum = 0.0;
-                    bufs.clear_trail();
+                    pending_switch = Some(PendingSwitch::Random(RandomState { seed, planet, name }));
+                    if !matches!(anim_phase, AnimPhase::SwitchOut) {
+                        anim_phase = AnimPhase::SwitchOut;
+                        anim_t = 0.0;
+                    }
                 }
                 Event::Key(KeyEvent {
                     code: KeyCode::Char('s' | 'ы'),
@@ -334,11 +350,12 @@ fn run(stdout: &mut impl Write, args: Args) -> io::Result<()> {
                     code: KeyCode::Char(c @ '1'..='8'),
                     ..
                 }) => {
-                    current_planet = PlanetId::from_digit(c.to_digit(10).unwrap() as u8);
-                    current_planet_box = planets::get(current_planet);
-                    random_state = None;
-                    spin_accum = 0.0;
-                    bufs.clear_trail();
+                    let id = PlanetId::from_digit(c.to_digit(10).unwrap() as u8);
+                    pending_switch = Some(PendingSwitch::Named { id, planet: planets::get(id) });
+                    if !matches!(anim_phase, AnimPhase::SwitchOut) {
+                        anim_phase = AnimPhase::SwitchOut;
+                        anim_t = 0.0;
+                    }
                 }
                 _ => {}
             }
@@ -409,6 +426,42 @@ fn run(stdout: &mut impl Write, args: Args) -> io::Result<()> {
             renderer::FallingStar { hx: fs.hx, hy: fs.hy, alpha }
         });
 
+        anim_t += dt;
+        if matches!(anim_phase, AnimPhase::Intro) && anim_t >= INTRO_DUR {
+            anim_phase = AnimPhase::Idle;
+            anim_t = 0.0;
+        } else if matches!(anim_phase, AnimPhase::SwitchOut) && anim_t >= SWITCH_DUR {
+            if let Some(ps) = pending_switch.take() {
+                match ps {
+                    PendingSwitch::Named { id, planet } => {
+                        current_planet = id;
+                        current_planet_box = planet;
+                        random_state = None;
+                    }
+                    PendingSwitch::Random(rs) => {
+                        random_state = Some(rs);
+                    }
+                }
+            }
+            spin_accum = 0.0;
+            bufs.clear_trail();
+            anim_phase = AnimPhase::SwitchIn;
+            anim_t = 0.0;
+        } else if matches!(anim_phase, AnimPhase::SwitchIn) && anim_t >= SWITCH_DUR {
+            anim_phase = AnimPhase::Idle;
+            anim_t = 0.0;
+        } else if matches!(anim_phase, AnimPhase::Outro) && anim_t >= OUTRO_DUR {
+            return Ok(());
+        }
+
+        let anim_scale = match anim_phase {
+            AnimPhase::Intro => smoothstep(anim_t / INTRO_DUR),
+            AnimPhase::Idle => 1.0,
+            AnimPhase::SwitchOut => 1.0 - smoothstep(anim_t / SWITCH_DUR),
+            AnimPhase::SwitchIn => smoothstep(anim_t / SWITCH_DUR),
+            AnimPhase::Outro => 1.0 - smoothstep(anim_t / OUTRO_DUR),
+        };
+
         let (planet_dyn, planet_name, planet_seed): (&dyn planets::Planet, &str, Option<u64>) =
             if let Some(ref rs) = random_state {
                 (rs.planet.as_ref(), rs.name.as_str(), Some(rs.seed))
@@ -422,7 +475,7 @@ fn run(stdout: &mut impl Write, args: Args) -> io::Result<()> {
             planet: planet_dyn,
             spin: spin_accum,
             orbit_angle,
-            zoom,
+            zoom: zoom * anim_scale,
             planet_name,
             show_help,
             planet_seed,
