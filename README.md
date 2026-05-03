@@ -6,15 +6,17 @@ Terminal idle screensaver - slowly spinning planets with procedural surface text
 
 ## Install
 
-**Arch Linux:**
-```bash
-paru -S orbitty
-```
-
-**From source:**
 ```bash
 cargo install --path .
 ```
+
+This installs the binary to `~/.cargo/bin/`. Make sure it is in your `PATH`:
+
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+Add that line to your `~/.bashrc` or `~/.zshrc` to make it permanent. After that, `orbitty` works from anywhere.
 
 Requires a terminal with true color support (`COLORTERM=truecolor` or `COLORTERM=24bit`).
 
