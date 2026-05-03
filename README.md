@@ -23,7 +23,7 @@ Add that line to your `~/.bashrc` or `~/.zshrc` to make it permanent.
 For fish:
 
 ```fish
-set -U fish_user_paths $HOME/.cargo/bin $fish_user_paths
+fish_add_path $HOME/.cargo/bin
 ```
 
 After that, `orbitty` works from anywhere.
