@@ -12,11 +12,21 @@ cargo install --path .
 
 This installs the binary to `~/.cargo/bin/`. Make sure it is in your `PATH`:
 
+For bash/zsh:
+
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-Add that line to your `~/.bashrc` or `~/.zshrc` to make it permanent. After that, `orbitty` works from anywhere.
+Add that line to your `~/.bashrc` or `~/.zshrc` to make it permanent.
+
+For fish:
+
+```fish
+fish_add_path $HOME/.cargo/bin
+```
+
+After that, `orbitty` works from anywhere.
 
 Requires a terminal with true color support (`COLORTERM=truecolor` or `COLORTERM=24bit`).
 
